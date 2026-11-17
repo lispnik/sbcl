@@ -24,8 +24,10 @@
       (merge-pathnames "sbcl\\sbclrc"
                        (sb-win32::get-folder-pathname
                         sb-win32::csidl_common_appdata))
-      #-win32
-      "/etc/sbclrc"))
+      #-(or win32 dos)
+      "/etc/sbclrc"
+      #+dos
+      "C:\\SBCLRC"))
 
 (defun userinit-pathname ()
   (merge-pathnames ".sbclrc" (user-homedir-pathname)))

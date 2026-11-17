@@ -73,9 +73,11 @@ static void TRACE_NAME(lispobj* where)
     lispobj header = *where;
     int widetag = header_widetag(header);
 
-    if (instanceoid_widetag_p(widetag))
-        return USING_LAYOUT(layout_of(where), where,
-                            instanceoid_length(header));
+    if (instanceoid_widetag_p(widetag)) {
+        USING_LAYOUT(layout_of(where), where,
+                     instanceoid_length(header));
+        return;
+    }
     sword_t scan_from = 1;
     sword_t scan_to = sizetab[widetag](where);
     sword_t i;

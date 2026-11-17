@@ -1837,7 +1837,9 @@ keywords explicitly."
 
   (defun os-windows-p ()
     "Is the underlying operating system Microsoft Windows?"
-    (and (not (os-unix-p)) (featurep '(:or :win32 :windows :mswindows :mingw32 :mingw64))))
+    ;; DOS counts as Windows here: the same drive letters and backslashes,
+    ;; and what ASDF asks of Windows beyond that it asks through the Lisp.
+    (and (not (os-unix-p)) (featurep '(:or :win32 :windows :mswindows :mingw32 :mingw64 :dos))))
 
   (defun os-genera-p ()
     "Is the underlying operating system Genera (running on a Symbolics Lisp Machine)?"
@@ -7148,9 +7150,14 @@ this function tries to locate the Windows FOLDER for one of
         (ecase folder
           (:local-appdata (or (getenv-absolute-directory "LOCALAPPDATA")
                               (subpathname* (get-folder-path :appdata) "Local")))
-          (:appdata (getenv-absolute-directory "APPDATA"))
+          (:appdata (or (getenv-absolute-directory "APPDATA")
+                        ;; DOS has no such folders: keep things under the home directory
+                        (and (featurep :dos)
+                             (ensure-absolute-pathname (user-homedir-pathname)
+                                                       'get-pathname-defaults))))
           (:common-appdata (or (getenv-absolute-directory "ALLUSERSAPPDATA")
-                               (subpathname* (getenv-absolute-directory "ALLUSERSPROFILE") "Application Data/"))))))
+                               (subpathname* (getenv-absolute-directory "ALLUSERSPROFILE") "Application Data/")
+                               (and (featurep :dos) (get-folder-path :appdata)))))))
 
 
   ;; Support for the XDG Base Directory Specification

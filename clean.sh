@@ -5,7 +5,7 @@ set -e
 # In most cases, we can remove the directories, too.
 #
 # Preserving the skeletons of some directories might or might not not be relevant.
-rm -rf obj/* src/runtime/genesis/ src/runtime/sbcl.mk src/runtime/*.dSYM
+rm -rf obj/* src/runtime/genesis/ src/runtime/sbcl.mk src/runtime/*.dSYM src/runtime/dos-obj src/runtime/sbcl.exe src/runtime/hdpmi32.exe src/runtime/grovel-headers.exe
 
 if [ -z "$SBCL_LEAVE_OUTPUT" ]
 then

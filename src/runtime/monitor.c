@@ -179,7 +179,8 @@ void save_gc_crashdump(char *pathname,
     preamble.tlsf_control_size = tlsf_size();
     memcpy(preamble.sentinel_block, tlsf_memory_end-3*N_WORD_BYTES, 3*N_WORD_BYTES);
 #endif
-    struct filewriter writer = { .fd = fd, .total = 0, .verbose = verbose };
+    struct filewriter writer;
+    writer.fd = fd, writer.total = 0, writer.verbose = verbose;
     // write the preamble and static + readonly spaces
     checked_write("preamble", &writer, &preamble, sizeof preamble);
 #ifdef LISP_FEATURE_LINKAGE_SPACE
@@ -1101,6 +1102,12 @@ static int layouts_cmd(char __attribute__((unused)) **ptr, iochannel_t io)
 }
 
 static int monitor_loop(char *(*)(char*, int, FILE*), struct iochannel);
+#ifdef __WATCOMC__
+// The C library's functions don't have the default calling convention
+static char *ldb_fgets(char *s, int n, FILE *f) { return fgets(s, n, f); }
+#else
+#define ldb_fgets fgets
+#endif
 extern FILE *gc_activitylog_file;
 void
 ldb_monitor(void)
@@ -1120,7 +1127,7 @@ ldb_monitor(void)
 #endif
     }
 
-    if (!monitor_loop(fgets, io)) exit(1);
+    if (!monitor_loop(ldb_fgets, io)) exit(1);
 }
 static int monitor_loop(char *(*getline_fun)(char*, int, FILE*),
                         struct iochannel io)

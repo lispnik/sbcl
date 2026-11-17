@@ -216,10 +216,16 @@ struct generation {
 
 extern struct generation generations[NUM_GENERATIONS];
 
+#ifndef __GNUC__
+#pragma pack(push, 1) // for compilers without __attribute__((packed))
+#endif
 struct __attribute__((packed)) corefile_pte {
   uword_t sso; // scan start offset
   page_words_t words_used; // low bit is the 'large object' flag
 };
+#ifndef __GNUC__
+#pragma pack(pop)
+#endif
 
 /* When computing a card index we never subtract the heap base, which simplifies
  * code generation. The heap base is guaranteed to be GC-page-aligned.

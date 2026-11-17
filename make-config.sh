@@ -82,6 +82,11 @@ do
       --arch=)
         $oparg_ok && SBCL_ARCH=$optarg
         ;;
+      --os=)
+        # Cross-configure for a target OS that cannot run this script
+        # (currently only "dos").
+        $optarg_ok && SBCL_OS=$optarg
+        ;;
       --xc-host=)
         $optarg_ok && SBCL_XC_HOST=$optarg
         ;;
@@ -317,7 +322,11 @@ echo "android=$android; export android" >> output/build-config
 
 # And now, sorting out the per-target dependencies...
 
-case `uname` in
+case ${SBCL_OS:-`uname`} in
+    dos)
+        # Cross-build only: see make-dos.sh
+        sbcl_os="dos"
+        ;;
     Linux)
         sbcl_os="linux"
         ;;
@@ -584,6 +593,12 @@ esac
 case "$sbcl_os" in
     linux) ;; *) SBCL_CONTRIB_BLOCKLIST="$SBCL_CONTRIB_BLOCKLIST sb-perf" ;;
 esac
+case "$sbcl_os" in
+    dos) # no POSIX, no shared libraries, no SIGPROF, no C compiler on the target
+        # (sb-bsd-sockets is built by make-dos-contrib.sh)
+        SBCL_CONTRIB_BLOCKLIST="$SBCL_CONTRIB_BLOCKLIST sb-posix sb-simple-streams sb-sprof sb-gmp sb-mpfr sb-capstone sb-grovel"
+        ;;
+esac
 
 echo //setting up OS-dependent information
 
@@ -599,6 +614,7 @@ link_or_copy $sbcl_arch-lispregs.h target-lispregs.h
 case "$sbcl_os" in # all but 2 unconditionally have clock-gettime
     darwin) ;;
     win32) ;;
+    dos) ;;
     *) printf ' :os-provides-clock-gettime' >> $ltf ;;
 esac
 case "$sbcl_os" in
@@ -732,6 +748,18 @@ case "$sbcl_os" in
         link_or_copy $sbcl_arch-win32-os.h target-arch-os.h
         link_or_copy win32-os.h target-os.h
         ;;
+    dos)
+        # 32-bit protected-mode DOS under a DPMI 1.0 host (HDPMI32), C runtime
+        # built with Open Watcom.  Neither :unix nor :win32.
+        if [ "$sbcl_arch" != x86 ]; then
+            echo "unsupported architecture for dos: $sbcl_arch"
+            exit 1
+        fi
+        printf ' :dos' >> $ltf
+        link_or_copy Config.x86-dos Config
+        link_or_copy x86-dos-os.h target-arch-os.h
+        link_or_copy dos-os.h target-os.h
+        ;;
     *)
         echo unsupported OS type: `uname`
         exit 1
@@ -822,6 +850,10 @@ then
     # Launching new executables is pretty slow on macOS, but this configuration is pretty uniform
     echo ' :little-endian :os-provides-dlopen :os-provides-dladdr' >> $ltf
     echo ' :os-provides-posix-spawn' >> $ltf
+elif [ "$sbcl_os" = dos ]
+then
+    # The target cannot run on the build host, so nothing is probed.
+    echo ' :little-endian' >> $ltf
 else
     # Use a little C program to try to guess the endianness.  Ware
     # cross-compilers!

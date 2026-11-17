@@ -403,6 +403,15 @@ triggers."
               (values 0 min-nsec)
               (values s u))))))
 
+#+dos
+(progn
+  ;; FIXME: there is no asynchronous timer source on DOS yet.
+  (defun %set-system-timer (sec nsec)
+    (declare (ignore sec nsec))
+    (error "Timers are not supported on DOS."))
+  (defun %clear-system-timer ()
+    nil))
+
 #+unix
 (progn
   (defun %set-system-timer (sec nsec)

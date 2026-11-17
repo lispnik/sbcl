@@ -1,0 +1,3 @@
+# Foreign symbols that Lisp code compiled on the target (the warm build,
+# contribs, user code) may refer to, in addition to those genesis records
+# for the cold core.  One name per line.  See tools-for-build/dos-symtab.sh.

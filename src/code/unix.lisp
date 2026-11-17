@@ -192,6 +192,7 @@ corresponds to NAME, or NIL if there is none. See `getenv(3)`."
         (declare (optimize (sb-c::float-accuracy 0)))
       (let ((result (alien-funcall (extern-alien "open" (function int c-string int &optional int))
                                    path (logior flags
+                                                #+dos o_binary ; never text mode
                                                 #+largefile o_largefile)
                                    mode)))
         (if (minusp result)
@@ -415,16 +416,16 @@ corresponds to NAME, or NIL if there is none. See `getenv(3)`."
   ;;
   ;; Signal an error at compile-time, since it's needed for the
   ;; runtime to start up
-  #-(or android linux openbsd freebsd netbsd sunos darwin dragonfly haiku)
+  #-(or android linux openbsd freebsd netbsd sunos darwin dragonfly haiku dos)
   #.(error "POSIX-GETCWD is not implemented.")
   (or
-   #+(or linux openbsd freebsd netbsd sunos darwin dragonfly haiku)
+   #+(or linux openbsd freebsd netbsd sunos darwin dragonfly haiku dos)
    (newcharstar-string (alien-funcall (extern-alien "getcwd"
                                                     (function (* char)
                                                               (* char)
                                                               size-t))
                                       nil
-                                      #+(or linux openbsd freebsd netbsd darwin dragonfly haiku) 0
+                                      #+(or linux openbsd freebsd netbsd darwin dragonfly haiku dos) 0
                                       #+(or sunos) 1025))
    #+android
    (with-alien ((ptr (array char #.path-max)))
@@ -1022,7 +1023,7 @@ avoiding `atexit(3)` hooks, etc. Otherwise `exit(2)` is called."
               #-64-bit (slot ts 'tv-sec)
               (truly-the (integer 0 #.(expt 10 9)) (slot ts 'tv-nsec))))))
 
-#+unix
+#+(or unix dos)
 (progn
   (declaim (inline get-time-of-day))
   (defun get-time-of-day ()

@@ -147,7 +147,7 @@
                       (sap-int (sb-vm:context-pc context))))))))
 
 (define-signal-handler sigill-handler "illegal instruction")
-#-(or linux android haiku)
+#-(or linux android haiku dos)
 (define-signal-handler sigemt-handler "SIGEMT")
 (define-signal-handler sigbus-handler "bus error")
 #-(or linux android)
@@ -219,7 +219,7 @@
   (%install-handler sigint #'sigint-handler)
   (%install-handler sigterm #'sigterm-handler)
   (%install-handler sigill #'sigill-handler)
-  #-(or linux android haiku) (%install-handler sigemt #'sigemt-handler)
+  #-(or linux android haiku dos) (%install-handler sigemt #'sigemt-handler)
   (%install-handler sigfpe #'sb-vm:sigfpe-handler)
   (if (/= (extern-alien "install_sig_memory_fault_handler" int) 0)
       (%install-handler sigbus #'sigbus-handler)

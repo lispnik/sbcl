@@ -937,7 +937,9 @@ process_directory(int count, struct ndir_entry *entry,
 #endif
 
     calc_asm_routine_bounds();
-    struct cons spaceadj = {(lispobj)spaces, (lispobj)adj};
+    struct cons spaceadj;
+    spaceadj.car = (lispobj)spaces;
+    spaceadj.cdr = (lispobj)adj;
     set_adjustment(&spaceadj, READ_ONLY_CORE_SPACE_ID, READ_ONLY_SPACE_START);
     set_adjustment(&spaceadj, DYNAMIC_CORE_SPACE_ID, DYNAMIC_SPACE_START);
 #ifdef LISP_FEATURE_RELOCATABLE_STATIC_SPACE
@@ -1461,7 +1463,9 @@ load_core_file(char *file, os_vm_offset_t file_offset, int merge_core_pages)
              (lispobj)val, CORE_MAGIC);
 
     struct coreparse_space defined_spaces[] = {
-        {READ_ONLY_CORE_SPACE_ID, 0, 0, READ_ONLY_SPACE_START, &read_only_space_free_pointer},
+        // base and size of these two are assigned below: not constants
+        {READ_ONLY_CORE_SPACE_ID, 0, 0, 0, &read_only_space_free_pointer},
+        {DYNAMIC_CORE_SPACE_ID, 0, 0, 0, 0},
 #ifdef LISP_FEATURE_X86_64 // specify the static space size in order to allocate it
         {STATIC_CORE_SPACE_ID, STATIC_SPACE_SIZE, 0, STATIC_SPACE_START, &static_space_free_pointer},
 #else                      // must not specify the static space size
@@ -1485,8 +1489,9 @@ load_core_file(char *file, os_vm_offset_t file_offset, int merge_core_pages)
         // Unlike static-code-core-space, this space _is_ a root for GC.
         {IMMOBILE_TEXT_CORE_SPACE_ID, 0, 0, 0, &text_space_highwatermark},
 #endif
-        {DYNAMIC_CORE_SPACE_ID, dynamic_space_size, 0, 0, 0}
     };
+    defined_spaces[0].base = READ_ONLY_SPACE_START;
+    defined_spaces[1].desired_size = dynamic_space_size;
     // The initializer ensures that indexing into spaces[] is insensitive
     // to the space numbering and the order listed in defined_spaces.
     struct coreparse_space* spaces =

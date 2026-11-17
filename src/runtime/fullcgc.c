@@ -173,7 +173,7 @@ static void __mark_obj(lispobj pointer)
         leaf_marked = 1;
 }
 
-inline void gc_mark_obj(lispobj thing) {
+void gc_mark_obj(lispobj thing) { // (not 'inline': it's called from gencgc.c too)
     if (is_lisp_pointer(thing)) __mark_obj(thing);
 }
 

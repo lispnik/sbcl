@@ -200,16 +200,26 @@ int parse_addr(char **ptr, bool safely, char **output, FILE* errstream)
 static lispobj lookup_symbol(char *name)
 {
     uword_t ranges[][2] = {
-      { STATIC_SPACE_OBJECTS_START, (uword_t)static_space_free_pointer },
+      { STATIC_SPACE_OBJECTS_START, 0 },
 #ifdef LISP_FEATURE_IMMOBILE_SPACE
       { FIXEDOBJ_SPACE_START, (uword_t)fixedobj_free_pointer },
 #endif
 #ifdef LISP_FEATURE_GENERATIONAL
-      { DYNAMIC_SPACE_START, dynamic_space_highwatermark() }
+      { 0, 0 }
 #else
-      { (uword_t)current_dynamic_space, (uword_t)get_alloc_pointer() }
+      { 0, 0 }
 #endif
     };
+    // Not constant expressions, so they can't portably be in the initializer
+    int last = sizeof ranges/(2*sizeof (uword_t)) - 1;
+    ranges[0][1] = (uword_t)static_space_free_pointer;
+#ifdef LISP_FEATURE_GENERATIONAL
+    ranges[last][0] = DYNAMIC_SPACE_START;
+    ranges[last][1] = dynamic_space_highwatermark();
+#else
+    ranges[last][0] = (uword_t)current_dynamic_space;
+    ranges[last][1] = (uword_t)get_alloc_pointer();
+#endif
 
     lispobj *headerptr;
     unsigned i;

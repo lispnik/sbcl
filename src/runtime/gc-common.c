@@ -1594,7 +1594,7 @@ static void scan_nonweak_kv_vector(struct vector *kv_vector, void (*scav_entry)(
 
     if (!vector_flagp(kv_vector->header, VectorAddrHashing)) {
         // All keys were hashed address-insensitively
-        return (void)scavenge(data + 2, KV_PAIRS_HIGH_WATER_MARK(data) * 2);
+        { scavenge(data + 2, KV_PAIRS_HIGH_WATER_MARK(data) * 2); return; }
     }
     // Read the hash vector (or NIL) from the last element. If the last element
     // satisfies instancep() then this vector belongs to a weak table,
@@ -2938,7 +2938,10 @@ https://www.microsoft.com/en-us/research/wp-content/uploads/2016/02/zero-oopsla-
 #if !defined LISP_FEATURE_DARWIN_JIT && !defined LISP_FEATURE_WIN32
 static void __attribute__((unused))
 zero_range_with_mmap(os_vm_address_t addr, os_vm_size_t length) {
-#ifdef LISP_FEATURE_LINUX
+#ifdef LISP_FEATURE_DOS
+    extern void dos_release_range(void*, size_t);
+    dos_release_range(addr, length); // decommit: comes back zero-filled on next use
+#elif defined LISP_FEATURE_LINUX
     // We use MADV_DONTNEED only on Linux due to differing semantics from BSD.
     // Linux treats it as a demand that the memory be 0-filled, or refreshed
     // from a file that backs the range. BSD takes it as a hint that you don't

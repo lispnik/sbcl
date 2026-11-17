@@ -50,7 +50,8 @@
  * rid of? -- WHN 2004-04-18)
  */
 #if defined(__linux__) || defined(LISP_FEATURE_FREEBSD) || defined(__NetBSD__) || defined(__OpenBSD__) || \
-        defined(__sun) || defined(LISP_FEATURE_WIN32) || defined(__DragonFly__)
+        defined(__sun) || defined(LISP_FEATURE_WIN32) || defined(__DragonFly__) || \
+        defined(LISP_FEATURE_DOS)
 #define align_16byte	16
 #else
 #define	align_16byte	4

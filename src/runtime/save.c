@@ -52,14 +52,13 @@ static void
 write_memsize_options(FILE *file, int options)
 {
     size_t size = 5 + options -1;
-    core_entry_elt_t optarray[] = {
-      RUNTIME_OPTIONS_MAGIC,
-      size, // number of words in this core header entry
-      dynamic_space_size,
-      thread_control_stack_size,
-      dynamic_values_bytes,
-      0
-    };
+    core_entry_elt_t optarray[6];
+    optarray[0] = RUNTIME_OPTIONS_MAGIC;
+    optarray[1] = size; // number of words in this core header entry
+    optarray[2] = dynamic_space_size;
+    optarray[3] = thread_control_stack_size;
+    optarray[4] = dynamic_values_bytes;
+    optarray[5] = 0;
 
     if (size !=
         fwrite(optarray, sizeof(core_entry_elt_t), size, file)) {

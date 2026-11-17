@@ -1,0 +1,12 @@
+# -*- makefile -*- for the DOS (x86, DPMI) runtime
+#
+# The DOS runtime is cross-compiled with Open Watcom v2, whose tools the
+# generic GNUmakefile cannot drive.  Use Makefile.dos instead:
+#
+#     make -f Makefile.dos
+#
+# (make-dos.sh at the top level does this as part of a full build.)
+# ("clean" still goes through the generic makefile: see clean.sh.)
+ifeq ($(filter clean,$(MAKECMDGOALS)),)
+$(error The DOS runtime is built with "make -f Makefile.dos"; see make-dos.sh)
+endif

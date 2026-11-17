@@ -78,6 +78,8 @@ os_context_flags_addr(os_context_t *context)
     return &(context->uc_mcontext.__gregs[_REG_EFL]);
 #elif defined LISP_FEATURE_WIN32
     return (int *)&context->win32_context->EFlags;
+#elif defined LISP_FEATURE_DOS
+    return (int *)&context->eflags;
 #else
 #error unsupported OS
 #endif
@@ -284,7 +286,8 @@ void
 sigill_handler(int signal, siginfo_t *siginfo, os_context_t *context) {
     if (*(unsigned short *)OS_CONTEXT_PC(context) == UD2_INST) {
         OS_CONTEXT_PC(context) += 2;
-        return sigtrap_handler(signal, siginfo, context);
+        sigtrap_handler(signal, siginfo, context);
+        return;
     }
     fake_foreign_function_call(context);
     lose("Unhandled SIGILL at %p.", (void*)OS_CONTEXT_PC(context));

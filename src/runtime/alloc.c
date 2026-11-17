@@ -68,27 +68,32 @@
  */
 bool allocate_hardwired_spaces(bool hard_failp)
 {
+    // (Filled in by assignment rather than with an initializer because some of
+    // the values are not constants, which not every C compiler accepts.)
     struct {
         uword_t start;
         unsigned size;
         int id;
-    } preinit_spaces[] = {
+    } preinit_spaces[4];
+    int i;
+    int n_spaces = 0;
+#define PREINIT_SPACE(start_, size_, id_) \
+    (preinit_spaces[n_spaces].start = start_, preinit_spaces[n_spaces].size = size_, \
+     preinit_spaces[n_spaces].id = id_, ++n_spaces)
 #ifndef LISP_FEATURE_X86_64
       // For x86-64, static space allocation request depends on dynamic space size,
       // and linkage spaces (alien + lisp) are either placed at the start of
       // text space if it exists, or below static space otherwise.
-        { READ_ONLY_SPACE_START, READ_ONLY_SPACE_SIZE, READ_ONLY_CORE_SPACE_ID },
-        { ALIEN_LINKAGE_SPACE_START, ALIEN_LINKAGE_SPACE_SIZE, ALIEN_LINKAGE_TABLE_CORE_SPACE_ID },
+    PREINIT_SPACE(READ_ONLY_SPACE_START, READ_ONLY_SPACE_SIZE, READ_ONLY_CORE_SPACE_ID);
+    PREINIT_SPACE(ALIEN_LINKAGE_SPACE_START, ALIEN_LINKAGE_SPACE_SIZE, ALIEN_LINKAGE_TABLE_CORE_SPACE_ID);
 #endif
 #ifndef LISP_FEATURE_RELOCATABLE_STATIC_SPACE
-        { STATIC_SPACE_START, STATIC_SPACE_SIZE, STATIC_CORE_SPACE_ID },
+    PREINIT_SPACE(STATIC_SPACE_START, STATIC_SPACE_SIZE, STATIC_CORE_SPACE_ID);
 #endif
 #ifdef LISP_FEATURE_DARWIN_JIT
-        { STATIC_CODE_SPACE_START, STATIC_CODE_SPACE_SIZE, STATIC_CODE_CORE_SPACE_ID },
+    PREINIT_SPACE(STATIC_CODE_SPACE_START, STATIC_CODE_SPACE_SIZE, STATIC_CODE_CORE_SPACE_ID);
 #endif
-    };
-    int i;
-    int n_spaces = sizeof preinit_spaces / sizeof preinit_spaces[0];
+#undef PREINIT_SPACE
     for (i = 0; i< n_spaces; ++i) {
         if (!preinit_spaces[i].size) continue;
         if (os_alloc_gc_space(preinit_spaces[i].id,

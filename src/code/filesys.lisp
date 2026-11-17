@@ -725,13 +725,13 @@ it does not exist or if it is a file or a symbolic link."
            (and (not (equal x "")) x))
          (lose (&optional username)
            (error "Couldn't find home directory~@[ for ~S~]." username)))
-    #-win32
+    #-(or win32 dos)
     (if username
         (sb-unix:user-homedir username)
         (or (not-empty (posix-getenv "HOME"))
             (not-empty (sb-unix:uid-homedir (sb-unix:unix-getuid)))
             (lose)))
-    #+win32
+    #+(or win32 dos)
     (if username
         (lose username)
         (or (not-empty (posix-getenv "HOME"))
@@ -740,6 +740,11 @@ it does not exist or if it is a file or a symbolic link."
                   (path (not-empty (posix-getenv "HOMEPATH"))))
               (and drive path
                    (concatenate 'string drive path)))
+            ;; DOS is single-user: with no HOME set, use the directory
+            ;; holding the SBCL core.
+            #+dos (let ((home (sbcl-homedir-pathname)))
+                    (and home (native-namestring home)))
+            #+dos "C:\\"
             (lose)))))
 
 ;;; (This is an ANSI Common Lisp function.)

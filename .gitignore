@@ -49,3 +49,15 @@
 /contrib/asdf/asdf-upstream
 /doc/manual/*.html
 /version.lisp-expr
+
+# DOS port build products
+src/runtime/dos-obj/
+src/runtime/sbcl.exe
+src/runtime/hdpmi32.exe
+tools-for-build/dos-spikes/out/
+DOSRUN.BAT
+DOSRUN.LOG
+DOSRUN.OK
+src/runtime/grovel-headers.exe
+src/runtime/*.err
+tools-for-build/dos-spikes/*.err

@@ -184,7 +184,8 @@ static void walk_all_gc_spaces(void (*fun)(lispobj*,uword_t), uword_t arg)
 #endif
     if (TEXT_SPACE_START)
         walk_range((lispobj*)TEXT_SPACE_START, text_space_highwatermark, fun, arg);
-    struct pair pair = {fun, arg};
+    struct pair pair;
+    pair.func = fun, pair.data = arg;
     walk_generation(walk_range_wrapper, -1, &pair);
 }
 
@@ -364,7 +365,8 @@ void move_rospace_to_dynamic(__attribute__((unused)) int print)
     read_only_space_free_pointer = (lispobj*)READ_ONLY_SPACE_START;
     // Once more visit dynamic space clobbering file stream buffer SAPs
     if (save_lisp_gc_iteration == 1) {
-        struct pair pair = {nuke_fd_stream_buffer, (uword_t)nullsap};
+        struct pair pair;
+        pair.func = nuke_fd_stream_buffer, pair.data = (uword_t)nullsap;
         walk_generation(walk_range_wrapper, -1, (void*)&pair);
     }
 }

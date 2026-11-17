@@ -24,6 +24,7 @@
 
 #-sb-bsd-sockets-addrinfo
 (defun make-host-ent (h &optional errno)
+  (declare (ignore errno))
   (when (sb-alien:null-alien h)
     (name-service-error "gethostbyname" (get-name-service-errno)))
   (let* ((length (sockint::hostent-length h))

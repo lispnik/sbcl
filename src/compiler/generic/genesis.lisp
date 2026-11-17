@@ -3530,6 +3530,7 @@ static inline unsigned int schar(struct vector* string, int index) {
   (let ((sap-align #+riscv 32 ; not sure why this is larger than normal
                    #-riscv (* 2 sb-vm:n-word-bytes)))
     (format t "
+#ifdef __GNUC__
 #define DX_ALLOC_SAP(var_name, ptr)                                 \\
 lispobj var_name;                                                   \\
 struct sap _dx_##var_name __attribute__ ((aligned (~D)));           \\
@@ -3537,8 +3538,22 @@ do {                                                                \\
     _dx_##var_name.header = (1 << 8) | SAP_WIDETAG;                 \\
     _dx_##var_name.pointer = (char *)(ptr);                         \\
     var_name = make_lispobj(&_dx_##var_name, OTHER_POINTER_LOWTAG); \\
-} while (0)~%"
-            sap-align)))
+} while (0)
+#else
+/* No way to ask for an over-aligned local: allocate two and use
+ * whichever part is suitably aligned. */
+#define DX_ALLOC_SAP(var_name, ptr)                                 \\
+lispobj var_name;                                                   \\
+struct sap _dx_##var_name[2];                                       \\
+do {                                                                \\
+    struct sap *_sap_##var_name = (struct sap *)                    \\
+        (((uword_t)&_dx_##var_name[0] + (~D - 1)) & ~~(uword_t)(~D - 1)); \\
+    _sap_##var_name->header = (1 << 8) | SAP_WIDETAG;               \\
+    _sap_##var_name->pointer = (char *)(ptr);                       \\
+    var_name = make_lispobj(_sap_##var_name, OTHER_POINTER_LOWTAG); \\
+} while (0)
+#endif~%"
+            sap-align sap-align sap-align)))
 
 (defun get-primitive-obj (x)
   (find x sb-vm:*primitive-objects* :key #'sb-vm:primitive-object-name

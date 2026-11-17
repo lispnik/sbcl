@@ -36,6 +36,16 @@
           (setf all-definitions (nconc all-definitions definitions))))
       (with-open-file (stream c-file :direction :output :if-exists :supersede)
         (invoke "PRINT-C-SOURCE" stream all-headers all-definitions package))
+      ;; DOS can run neither a C compiler nor another program from here.
+      ;; make-dos-contrib.sh compiles runme.c on the build host, runs it
+      ;; under DOS, and starts us again with its output in place.
+      #+dos
+      (progn
+        (unless (probe-file output)
+          (format t "; Note: ~A has to be compiled and run to make ~A~%"
+                  (namestring c-file) (namestring output))
+          (sb-sys:os-exit 3))
+        (return-from run-defs-to-lisp))
       (let* ((c-compiler-output (merge-pathnames #+unix "a.out" #+win32 "a.exe" output))
              (result (invoke "RUN-C-COMPILER" c-file c-compiler-output)))
         (unless (= result 0) (error "C compilation failed"))
@@ -174,6 +184,17 @@
                              :direction :output :if-exists :supersede
                              :if-does-not-exist :create)
           (format asd "(defsystem :~A :class require-system)~%" *system*))
+        #+dos ; no cat
+        (with-open-file (out joined :direction :output :if-exists :supersede
+                                    :element-type '(unsigned-byte 8))
+          (let ((buffer (make-array 65536 :element-type '(unsigned-byte 8))))
+            (dolist (fasl outputs)
+              (with-open-file (in fasl :element-type '(unsigned-byte 8))
+                (loop for n = (read-sequence buffer in)
+                      until (zerop n)
+                      do (write-sequence buffer out :end n))))))
+        #+dos (sb-sys:os-exit 0)
+        #-dos
         (sb-sys:os-exit
          (process-status
           ;; for #+win32 it's probably /usr/bin/cat.exe,

@@ -459,6 +459,8 @@
  ;; Operating system (mutually exclusive)
  (:android :auto :retain t)
  (:darwin :auto :retain t)
+ ;; 32-bit protected-mode DOS (DPMI), cross-built with Open Watcom
+ (:dos :auto :retain t)
  (:dragonfly :auto :retain t)
  (:freebsd :auto :retain t)
  (:gnu-kfreebsd :auto :retain t)

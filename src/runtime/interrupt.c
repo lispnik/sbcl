@@ -1303,7 +1303,7 @@ interrupt_handle_now_handler(int signal, siginfo_t *info, void *void_context)
 {
     SAVE_ERRNO(signal,context,void_context);
     if ((signal == SIGILL) || (signal == SIGBUS)
-#if !(defined LISP_FEATURE_LINUX || defined LISP_FEATURE_ANDROID || defined LISP_FEATURE_HAIKU)
+#if !(defined LISP_FEATURE_LINUX || defined LISP_FEATURE_ANDROID || defined LISP_FEATURE_HAIKU || defined LISP_FEATURE_DOS)
         || (signal == SIGEMT)
 #endif
         )

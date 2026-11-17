@@ -6,18 +6,33 @@
 #include "genesis/sbcl.h"
 
 
+#ifdef __GNUC__
 #define ALIGN_UP(value,granularity) \
   ((__typeof__(value))(((uword_t)(value) + ((granularity) - 1)) & ~((uword_t)(granularity)-1)))
 #define ALIGN_DOWN(value,granularity) \
   ((__typeof__(value))((uword_t)(value) & ~((uword_t)(granularity)-1)))
+#else
+// No typeof: the result is a uword_t whatever the type of 'value'
+#define ALIGN_UP(value,granularity) \
+  ((((uword_t)(value) + ((granularity) - 1)) & ~((uword_t)(granularity)-1)))
+#define ALIGN_DOWN(value,granularity) \
+  (((uword_t)(value) & ~((uword_t)(granularity)-1)))
+#endif
 
 #define IS_ALIGNED(value,granularity) (0==(((value))&((granularity)-1)))
 
+#ifdef __GNUC__
 #define PTR_ALIGN_UP(pointer,granularity)                       \
     (typeof(pointer))ALIGN_UP((uintptr_t)pointer,granularity)
 
 #define PTR_ALIGN_DOWN(pointer,granularity)                     \
     (typeof(pointer))ALIGN_DOWN((uintptr_t)pointer,granularity)
+#else
+#define PTR_ALIGN_UP(pointer,granularity)                       \
+    (char*)ALIGN_UP((uintptr_t)pointer,granularity)
+#define PTR_ALIGN_DOWN(pointer,granularity)                     \
+    (char*)ALIGN_DOWN((uintptr_t)pointer,granularity)
+#endif
 
 #define PTR_IS_ALIGNED(pointer,granularity)     \
     IS_ALIGNED((uintptr_t)pointer,granularity)

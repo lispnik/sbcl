@@ -58,6 +58,17 @@
 #include "wrap.h"
 #include "os.h"
 
+#ifdef LISP_FEATURE_DOS
+/* The C library defines the file types that DOS lacks as 0, but the
+ * Lisp side needs the constants to be distinct. */
+#undef S_IFBLK
+#undef S_IFLNK
+#undef S_IFSOCK
+#define S_IFBLK 0x6000
+#define S_IFLNK 0xA000
+#define S_IFSOCK 0xC000
+#endif
+
 #ifdef HAVE_LIBUNWIND
 #include <libunwind.h>
 #endif
@@ -196,6 +207,9 @@ main(int argc, char __attribute__((unused)) *argv[])
     defconstant("o_noctty",  O_NOCTTY);
     defconstant("o_trunc",   O_TRUNC);
     defconstant("o_append",  O_APPEND);
+#ifdef LISP_FEATURE_DOS
+    defconstant("o_binary",  O_BINARY);
+#endif
 #ifdef LISP_FEATURE_LARGEFILE
     defconstant("o_largefile", O_LARGEFILE);
 #endif

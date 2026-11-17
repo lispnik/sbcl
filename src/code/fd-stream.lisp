@@ -2673,7 +2673,7 @@ See the `FD` argument of MAKE-FD-STREAM.")
          namestring err
          "~@<couldn't rename ~2I~_~S ~I~_to ~2I~_~S~:>" namestring original))))
 
-#+unix (defun file-exists-p (path) (sb-unix:unix-access path sb-unix:f_ok))
+#+(or unix dos) (defun file-exists-p (path) (sb-unix:unix-access path sb-unix:f_ok))
 
 (defun %open-error (pathname errno if-exists if-does-not-exist)
   (flet ((signal-it (&rest arguments)
@@ -3003,10 +3003,10 @@ See the `FD` argument of MAKE-FD-STREAM.")
                                   (alien-funcall (extern-alien "sb_fileno"
                                                   (function int system-area-pointer))
                                                  sap)))
-                             #-unix (alien-funcall (extern-alien "_get_osfhandle"
+                             #+win32 (alien-funcall (extern-alien "_get_osfhandle"
                                                     (function signed int))
                                                    fileno)
-                             #+unix fileno))))
+                             #-win32 fileno))))
             (:copier nil)
             (:predicate nil))
   (sap 0 :type system-area-pointer)

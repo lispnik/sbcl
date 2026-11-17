@@ -218,7 +218,8 @@ static void print_constant(os_context_t *context, int offset, FILE* ostream) {
                     "Constant offset %d out of bounds for the code object @ %p\n",
                     offset, codeptr);
         } else {
-            struct iochannel io = {ostream, stdin};
+            struct iochannel io;
+            io.out = ostream, io.in = stdin;
             brief_print(codeptr->constants[offset -
                                            (offsetof(struct code, constants) >> WORD_SHIFT)],
                         &io);
@@ -273,7 +274,8 @@ void describe_error_arg(os_context_t *context, int sc_number, int offset, FILE* 
     case sc_AnyReg:
     case sc_DescriptorReg:
         putc('\t', f);
-        struct iochannel io = {f, stdin};
+        struct iochannel io;
+        io.out = f, io.in = stdin;
         brief_print(*os_context_register_addr(context, offset), &io);
         break;
 

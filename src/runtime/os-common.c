@@ -204,7 +204,7 @@ os_sem_destroy(os_sem_t *sem)
  */
 
 void *os_dlsym_default(char *name);
-#ifndef LISP_FEATURE_WIN32
+#if !defined LISP_FEATURE_WIN32 && !defined LISP_FEATURE_DOS // DOS: see dos-os.c
 void *
 os_dlsym_default(char *name)
 {
@@ -286,6 +286,7 @@ bool gc_managed_heap_space_p(lispobj addr)
 
 #ifndef LISP_FEATURE_WIN32
 
+#ifndef LISP_FEATURE_DOS // DOS has no mmap(): see load_core_bytes in dos-os.c
 #if defined LISP_FEATURE_MIPS
 #include <sys/utsname.h>
 #endif
@@ -364,6 +365,8 @@ void* load_core_bytes(int fd, os_vm_offset_t offset, os_vm_address_t addr, os_vm
         lose("load_core_bytes(%d,%p,%p,%zx) failed", fd, (void*)(uintptr_t)offset, addr, len);
     return (void*)actual;
 }
+
+#endif
 
 #ifdef LISP_FEATURE_DARWIN_JIT
 void* load_core_bytes_jit(int fd, os_vm_offset_t offset, os_vm_address_t addr, os_vm_size_t len)
@@ -459,7 +462,7 @@ lispobj* duplicate_codeblob_offheap(lispobj code)
     return mem;
 }
 
-#ifdef LISP_FEATURE_UNIX
+#if defined LISP_FEATURE_UNIX && !defined LISP_FEATURE_DOS // DOS: see dos-os.c
 void
 os_protect(os_vm_address_t address, os_vm_size_t length, os_vm_prot_t prot)
 {

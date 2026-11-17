@@ -139,7 +139,8 @@ lispobj* search_for_symbol(char *name, lispobj start, lispobj end, bool ignore_c
     // because we will certainly encounter remnants of forwarding pointers etc.
     // So if the specified range is all of dynamic space, defer to the space walker.
     if (start == DYNAMIC_SPACE_START && end == dynamic_space_highwatermark()) {
-        struct symbol_search ss = {name, ignore_case};
+        struct symbol_search ss;
+        ss.name = name, ss.ignore_case = ignore_case;
         return (lispobj*)walk_generation(search_symbol_aux, -1, &ss);
     }
 #endif

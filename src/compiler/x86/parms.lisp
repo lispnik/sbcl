@@ -170,6 +170,9 @@
 #+openbsd   (space-setup #x11000000 :dynamic-space-start #x8d000000)
 #+netbsd    (space-setup #x20000000 :dynamic-space-start #x60000000)
 #+darwin    (space-setup #x04000000 :dynamic-space-start #x10000000)
+;;; DOS under a DPMI 1.0 host: the program image and C heap sit just above
+;;; 1MB, and the fixed spaces are claimed with DPMI function 0504h.
+#+dos       (space-setup #x01000000 :dynamic-space-start #x10000000)
 
 ;;; Size of one alien-linkage-table entry in bytes.
 (defconstant alien-linkage-table-entry-size 8)

@@ -36,18 +36,18 @@
   (let ((sp (context-register context sb-vm::esp-offset)))
     (sap-ref-word (int-sap sp) return-pc-save-offset)))
 
-#+(or linux win32)
+#+(or linux win32 dos)
 (define-alien-routine ("os_context_float_register_addr" context-float-register-addr)
   (* unsigned) (context (* os-context-t)) (index int))
 
 (defun context-float-register (context index format &optional integer)
   (declare (ignore integer)
            (ignorable context index))
-  #-(or linux win32)
+  #-(or linux win32 dos)
   (progn
     (warn "stub CONTEXT-FLOAT-REGISTER")
     (coerce 0 format))
-  #+(or linux win32)
+  #+(or linux win32 dos)
   (let ((sap (alien-sap (context-float-register-addr context index))))
     (ecase format
       (single-float
@@ -68,7 +68,7 @@
 
 ;;; Given a signal context, return the floating point modes word in
 ;;; the same format as returned by FLOATING-POINT-MODES.
-#-(or linux sunos)
+#-(or linux sunos dos)
 (defun context-floating-point-modes (context)
   ;; FIXME: As of sbcl-0.6.7 and the big rewrite of signal handling for
   ;; POSIXness and (at the Lisp level) opaque signal contexts,
@@ -78,7 +78,7 @@
   (warn "stub CONTEXT-FLOATING-POINT-MODES")
   0)
 
-#+(or linux sunos)
+#+(or linux sunos dos)
 (define-alien-routine ("os_context_fp_control" context-floating-point-modes)
     (sb-alien:unsigned 32)
   (context (* os-context-t)))

@@ -435,7 +435,7 @@
           ":GENCGC and :CHENEYGC are incompatible")
          ("(and sb-safepoint (not (and (or arm64 x86 x86-64) (or darwin linux win32))))"
           ":SB-SAFEPOINT not supported on selected arch/OS")
-         ("(not (or elf mach-o win32))"
+         ("(not (or elf mach-o win32 dos))"
           "No execute object file format feature defined")
          ("(and cons-profiling (not sb-thread))" ":CONS-PROFILING requires :SB-THREAD")
          ("(and sb-linkable-runtime (not (or arm arm64 x86 x86-64 ppc ppc64)))"
@@ -466,7 +466,9 @@
          ("(and sb-thread x86 dragonfly)"
           ":SB-THREAD not supported on selected architecture")
          ("(and nonstop-foreign-call (not (and (or arm64 x86-64) sb-thread (not sb-safepoint))))"
-          ":NONSTOP-FOREIGN-CALL not supported with this combination of features")))
+          ":NONSTOP-FOREIGN-CALL not supported with this combination of features")
+         ("(and dos (or sb-thread unix win32 (not x86)))"
+          ":DOS is a non-threaded x86-only target, and is neither :UNIX nor :WIN32")))
       (failed-test-descriptions nil))
   (dolist (test feature-compatibility-tests)
     (let ((*readtable* *xc-readtable*))

@@ -1,0 +1,159 @@
+# -*- makefile -*-
+#
+# Builds the SBCL runtime for DOS (SBCL.EXE): a 32-bit protected-mode
+# program in "DOS PE" format, loaded by the HX DOS extender's LOADPE stub
+# and run under its DPMI host, HDPMI32.
+#
+# Cross-compiled with:
+#   Open Watcom v2    wcc386, wlink            (C runtime, link)
+#   GNU as/cpp        i386-elf-gcc             (x86-assem.S, unchanged syntax)
+#   objconv           ELF -> OMF conversion of the GNU as output
+#   NASM              x86-dos-exc.asm
+#
+# SBCL_DOS_TOOLS names a directory holding ow/ (an Open Watcom v2 snapshot)
+# and dl-hx/dev, dl-hx/rt (the HX "HXDEV" and "HXRT" kits).
+#
+# This software is part of the SBCL system. See the README file for
+# more information.
+
+SBCL_DOS_TOOLS ?= $(abspath ../../../sbcl-dos-tools)
+export WATCOM ?= $(SBCL_DOS_TOOLS)/ow
+export INCLUDE = $(WATCOM)/h
+HXDEV ?= $(SBCL_DOS_TOOLS)/dl-hx/dev
+HXRT ?= $(SBCL_DOS_TOOLS)/dl-hx/rt
+
+HOST_SYSTEM := $(shell uname -s)-$(shell uname -m)
+OWBIN_Darwin-arm64 = armo64
+OWBIN_Darwin-x86_64 = bino64
+OWBIN_Linux-aarch64 = arml64
+OWBIN_Linux-x86_64 = binl64
+OWBIN ?= $(OWBIN_$(HOST_SYSTEM))
+WCC = $(WATCOM)/$(OWBIN)/wcc386
+WLINK = $(WATCOM)/$(OWBIN)/wlink
+GAS_CC ?= i386-elf-gcc
+OBJCONV ?= objconv
+NASM ?= nasm
+
+O = dos-obj
+
+# Networking is included when the Watt-32 TCP/IP library has been built
+# (tools-for-build/dos-watt32.sh).
+WATT32_SRC ?= $(SBCL_DOS_TOOLS)/dl-watt32/src
+WATT32_BUILD ?= $(SBCL_DOS_TOOLS)/watt32-build
+WATT32_LIB := $(wildcard $(WATT32_BUILD)/wattcpsf.lib)
+
+# -6s -ecc  stack-based cdecl calling convention, as Lisp and x86-assem.S expect
+# -s        no stack overflow checks: Lisp code runs on a stack of its own
+# -of+      always keep EBP frames (backtraces, conservative stack scanning)
+# -fpi87    inline x87, results in ST(0)
+# The gencgc write barrier via page protection is off for now.
+CFLAGS = -zq -bt=dos -mf -6s -ecc -fpi87 -fp6 -s -za99 -zastd=c99 -ei -ox -of+ \
+	-wcd=102 -wcd=111 -DENABLE_PAGE_PROTECTION=0 \
+	-fi=dos-compat.h -i=dos-include -i=.
+
+COMMON_SRC = alloc.c arena.c backtrace.c breakpoint.c coalesce.c	\
+	coreparse.c dynbind.c funcall.c gc-common.c globals.c		\
+	hopscotch.c interr.c interrupt.c largefile.c main.c		\
+	math.c monitor.c murmur_hash.c os-common.c parse.c              \
+	print.c time.c                                                  \
+	regnames.c runtime.c safepoint.c save.c                         \
+	sc-offset.c search.c stringspace.c thread.c stop-the-world.c    \
+	var-io.c vars.c
+ARCH_SRC = x86-arch.c
+OS_SRC = dos-os.c x86-dos-os.c dos-wrap.c
+WRAP_SRC = dos-wrap.c
+ifneq ($(WATT32_LIB),)
+CFLAGS += -DDOS_SOCKETS
+SOCK_OBJ = $(O)/dos-sock.obj
+WRAP_SRC += dos-sock.c
+# Watt-32's calling convention (no -ecc) and its headers
+SOCK_CFLAGS = -zq -bt=dos -mf -6s -fpi87 -fp6 -s -ox -of+ -wcd=102 -wcd=111 \
+	-DWATT32_STATIC -i=$(WATT32_BUILD)/gen -i=$(WATT32_SRC)/inc -i=.
+endif
+GC_SRC = fullcgc.c gencgc.c traceroot.c
+C_SRC = $(COMMON_SRC) $(ARCH_SRC) $(OS_SRC) $(GC_SRC)
+
+OBJS = $(C_SRC:%.c=$(O)/%.obj) $(O)/tlsf.obj $(O)/x86-assem.obj \
+	$(O)/x86-dos-exc.obj $(SOCK_OBJ)
+
+HEADERS = $(wildcard *.h *.inc genesis/*.h genesis/*.inc dos-include/*.h dos-include/sys/*.h)
+
+all: sbcl.exe
+
+$(O):
+	mkdir -p $(O)
+
+$(O)/%.obj: %.c $(HEADERS) | $(O)
+	$(WCC) $(CFLAGS) -fo=$@ $<
+
+$(O)/dos-sock.obj: dos-sock.c dos-sock.h $(WATT32_LIB) | $(O)
+	$(WCC) $(SOCK_CFLAGS) -fo=$@ $<
+
+$(O)/tlsf.obj: ../../tlsf-bsd/tlsf/tlsf.c $(HEADERS) | $(O)
+	$(WCC) $(CFLAGS) -i=../../tlsf-bsd/tlsf -fo=$@ $<
+
+$(O)/x86-assem.obj: x86-assem.S $(HEADERS) | $(O)
+	$(GAS_CC) -c -I. -o $(O)/x86-assem.o $<
+	$(OBJCONV) -fomf32 $(O)/x86-assem.o $@ > $(O)/x86-assem.objconv.log
+
+$(O)/x86-dos-exc.obj: x86-dos-exc.asm | $(O)
+	$(NASM) -f obj -o $@ $<
+
+# "DOS PE": a PE image with HX's loader as the MZ stub and the Watcom
+# 32-bit DOS C library.  doslfn3s adds long file name support to the
+# library (used when a driver such as DOSLFN is loaded).  The signature
+# is changed from PE to PX so that nothing mistakes it for a Win32 program.
+# $(call link,output.exe,objects,extra libraries)
+define link
+	{ echo "format windows nt ^"; echo "runtime console=4.0"; \
+	  echo "option stub=$(HXDEV)/BIN/LOADPE.BIN"; \
+	  echo "option stack=1m"; echo "option map=$(O)/$(notdir $(basename $(1))).map"; echo "option quiet"; \
+	  echo "libpath $(WATCOM)/lib386"; echo "libpath $(WATCOM)/lib386/dos"; \
+	  echo "libpath $(HXDEV)/OWSUPP/V20/DOS"; \
+	  echo "libfile cstrtdhx.obj"; echo "library hxows"; echo "library doslfn3s"; \
+	  for l in $(3); do echo "library $$l"; done; \
+	  echo "name $(1)"; for o in $(2); do echo "file $$o"; done; } > $(O)/$(notdir $(basename $(1))).lnk
+	$(WLINK) @$(O)/$(notdir $(basename $(1))).lnk
+	printf 'PX' | dd of=$(1) bs=1 seek=`od -An -tu4 -j60 -N4 $(1) | tr -d ' '` conv=notrunc 2>/dev/null
+endef
+
+# The table of foreign symbols (there is no dlsym() on DOS) lists every
+# public symbol of the runtime, so it is made from the linker map of a
+# preliminary link with an empty table.
+$(O)/dos-symtab0.c: | $(O)
+	echo 'struct dos_symbol { const char *name; void *address; };' > $@
+	echo 'const struct dos_symbol dos_symtab[1]; const int dos_symtab_size = 0;' >> $@
+
+$(O)/sbcl0.exe: $(OBJS) $(O)/dos-symtab0.obj
+	$(call link,$@,$(OBJS) $(O)/dos-symtab0.obj,$(WATT32_LIB))
+
+$(O)/dos-symtab.c: $(O)/sbcl0.exe ../../output/cold-sbcl.map dos-extra-syms.txt $(WRAP_SRC) \
+		../../tools-for-build/dos-symtab.sh
+	sh ../../tools-for-build/dos-symtab.sh $(O)/sbcl0.map ../../output/cold-sbcl.map \
+		dos-extra-syms.txt $(WRAP_SRC) > $@ || { rm -f $@; exit 1; }
+
+$(O)/dos-symtab%.obj: $(O)/dos-symtab%.c
+	$(WCC) -zq -bt=dos -mf -6s -ecc -fo=$@ $<
+$(O)/dos-symtab.obj: $(O)/dos-symtab.c
+	$(WCC) -zq -bt=dos -mf -6s -ecc -fo=$@ $<
+
+sbcl.exe: $(OBJS) $(O)/dos-symtab.obj
+	$(call link,$@,$(OBJS) $(O)/dos-symtab.obj,$(WATT32_LIB))
+	cp -f $(HXRT)/BIN/HDPMI32.EXE hdpmi32.exe
+
+# The program that extracts constants and type sizes from the C headers
+# for the Lisp side.  It has to run on the target: see make-dos.sh.
+grovel-headers.exe: ../../tools-for-build/grovel-headers.c $(HEADERS) | $(O)
+	$(WCC) $(CFLAGS) -fo=$(O)/grovel-headers.obj $<
+	$(call link,$@,$(O)/grovel-headers.obj)
+
+# A program made by sb-grovel to extract constants and structure layouts
+# for a contrib (see make-dos-contrib.sh): make GROVEL_SRC=file.c grovel.exe
+$(O)/grovel.exe: $(GROVEL_SRC) dos-sock.h | $(O)
+	$(WCC) $(SOCK_CFLAGS) -fi=dos-sock.h -fo=$(O)/grovel.obj $(GROVEL_SRC)
+	$(call link,$@,$(O)/grovel.obj)
+
+clean:
+	rm -rf $(O) sbcl.exe hdpmi32.exe grovel-headers.exe
+
+.PHONY: all clean

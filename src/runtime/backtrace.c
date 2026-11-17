@@ -739,7 +739,9 @@ print_lisp_backtrace(int nframes, FILE *f)
     } else {
         void *fp;
 
-#ifdef LISP_FEATURE_X86
+#if defined LISP_FEATURE_X86 && defined __WATCOMC__
+        fp = __builtin_frame_address(0); // see dos-compat.h
+#elif defined LISP_FEATURE_X86
         asm("movl %%ebp,%0" : "=g" (fp));
 #elif defined (LISP_FEATURE_X86_64)
         asm("movq %%rbp,%0" : "=g" (fp));

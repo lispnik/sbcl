@@ -96,8 +96,8 @@
   "Most functions interacting with external formats (OPEN, notably)
   use this default.")
 (defvar *default-source-external-format*
-  #+win32 '(:default :newline :crlf)
-  #-win32 :default)
+  #+(or win32 dos) '(:default :newline :crlf)
+  #-(or win32 dos) :default)
 (declaim (always-bound *default-external-format* *default-source-external-format*))
 
 (declaim (special *gc-inhibit* *gc-pending*
