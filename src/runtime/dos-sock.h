@@ -31,10 +31,10 @@
 #include <arpa/inet.h>
 #include <netdb.h>
 
-/* Watt-32 numbers its sockets from 3 up, without regard for DOS file
- * handles.  Lisp sees them moved to a range that DOS handles do not reach
- * (a DOS process has 20 by default) and that still fits in the fd_set the
- * Lisp side uses (FD_SETSIZE is 64). */
+/* Sockets appear to Lisp as descriptors in a range that DOS file handles
+ * do not reach (a DOS process has 20 by default) and that still fits in
+ * the fd_set the Lisp side uses (FD_SETSIZE is 64): so, 32 open at a time.
+ * dos-sock.c maps them to Watt-32's own socket numbers. */
 #define DOS_SOCKET_BASE 32
 #define DOS_SOCKET_LIMIT 64
 #define dos_socket_p(fd) ((fd) >= DOS_SOCKET_BASE && (fd) < DOS_SOCKET_LIMIT)

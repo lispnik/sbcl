@@ -63,21 +63,39 @@ void __cdecl dos_sock_shutdown(void)
     if (started > 0) { started = 0; sock_exit(); }
 }
 
+/* Lisp's descriptors and Watt-32's socket numbers are kept apart by a
+ * table.  Watt-32 does not reuse the number of a closed TCP socket until
+ * two minutes have passed (the connection lingers, as TCP requires), so a
+ * server that takes many short connections soon has numbers in the
+ * hundreds, while Lisp has room for few descriptors.  A descriptor is
+ * free again as soon as Lisp closes it. */
+#define SLOTS (DOS_SOCKET_LIMIT - DOS_SOCKET_BASE)
+static int watt_socket[SLOTS];          /* by descriptor - DOS_SOCKET_BASE; 0 = free */
+
 /* Lisp's descriptor -> Watt-32's socket number, or -1 with errno set */
 static int sock(int fd)
 {
-    if (started > 0 && dos_socket_p(fd)) return fd - DOS_SOCKET_BASE;
+    if (started > 0 && dos_socket_p(fd) && watt_socket[fd - DOS_SOCKET_BASE])
+        return watt_socket[fd - DOS_SOCKET_BASE];
     errno = EBADF;
     return -1;
 }
 
-/* Watt-32's new socket number -> Lisp's descriptor */
+/* Watt-32's new socket number -> a descriptor for Lisp */
 static int descriptor(int s)
 {
+    int i;
     if (s < 0) return s;
-    if (s + DOS_SOCKET_BASE >= DOS_SOCKET_LIMIT) { close_s(s); errno = EMFILE; return -1; }
-    nonblocking[s + DOS_SOCKET_BASE] = 0;
-    return s + DOS_SOCKET_BASE;
+    /* (select_s() takes sets of FD_SETSIZE sockets: see dos_sock_ready) */
+    for (i = 0; i < SLOTS && s < FD_SETSIZE; i++)
+        if (!watt_socket[i]) {
+            watt_socket[i] = s;         /* never 0: Watt-32 numbers them from 3 */
+            nonblocking[i + DOS_SOCKET_BASE] = 0;
+            return i + DOS_SOCKET_BASE;
+        }
+    close_s(s);
+    errno = EMFILE;
+    return -1;
 }
 
 /* ---- called from dos-wrap.c, for descriptors that are sockets ---- */
@@ -101,7 +119,9 @@ int __cdecl dos_sock_write(int fd, const void *buf, unsigned n)
 int __cdecl dos_sock_close(int fd)
 {
     int s = sock(fd);
-    return s < 0 ? -1 : close_s(s);
+    if (s < 0) return -1;
+    watt_socket[fd - DOS_SOCKET_BASE] = 0;
+    return close_s(s);
 }
 
 /* Is the socket ready for reading (data, a pending connection, end of
