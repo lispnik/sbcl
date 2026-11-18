@@ -43,14 +43,34 @@ extern char _Extender, _ExtenderSubtype;
 static int started;                     /* 0 not yet, 1 running, -1 failed */
 static unsigned char nonblocking[DOS_SOCKET_LIMIT];
 
+/* While it starts, Watt-32 writes its progress ("Configuring through
+ * DHCP..") on the console, over whatever the program has on the screen.
+ * We keep what it says instead, and show it only if starting fails, when
+ * it is the explanation ("NO PACKET DRIVER FOUND."). */
+static char startup_text[400];
+static int startup_length;
+static int W32_CALL keep_char(char c)
+{
+    if (startup_length < (int)sizeof startup_text - 1) startup_text[startup_length++] = c;
+    return c;
+}
+
 /* Start the TCP/IP stack on first use.  Returns 0 if it is running. */
 static int startup(void)
 {
     if (!started) {
+        int (W32_CALL *console)(char) = _outch;
         _Extender = 1;                  /* "DOS/4G compatible": a plain DPMI client */
         _ExtenderSubtype = 0;
         _watt_do_exit = 0;              /* report failure rather than exit */
+        startup_length = 0;
+        _outch = keep_char;
         started = sock_init() == 0 ? 1 : -1;
+        _outch = console;
+        if (started < 0 && startup_length) {
+            startup_text[startup_length] = 0;
+            fprintf(stderr, "%s\n", startup_text);
+        }
     }
     if (started < 0) { errno = ENETDOWN; return -1; }
     return 0;
