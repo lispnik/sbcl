@@ -88,6 +88,11 @@ void dosw__exit(int code) { dos_sock_shutdown(); dos_record_exit_code(code); _ex
 /* for dos_exit() and the crash reporter */
 void dos_network_shutdown(void) { dos_sock_shutdown(); }
 int dosw_getpid(void) { return getpid(); }
+int dosw_chdir(const char *path) { return chdir(path); }
+int dosw_setenv(const char *name, const char *value, int overwrite)
+{
+    return setenv(name, value, overwrite);
+}
 int dosw_getuid(void) { return 0; }
 int dosw_setsid(void) { errno = ENOSYS; return -1; }
 int dosw_pipe(int fds[2]) { (void)fds; errno = ENOSYS; return -1; }

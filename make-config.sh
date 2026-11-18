@@ -596,7 +596,7 @@ esac
 case "$sbcl_os" in
     dos) # no POSIX, no shared libraries, no SIGPROF, no C compiler on the target
         # (sb-bsd-sockets is built by make-dos-contrib.sh)
-        SBCL_CONTRIB_BLOCKLIST="$SBCL_CONTRIB_BLOCKLIST sb-posix sb-simple-streams sb-sprof sb-gmp sb-mpfr sb-capstone sb-grovel"
+        SBCL_CONTRIB_BLOCKLIST="$SBCL_CONTRIB_BLOCKLIST sb-simple-streams sb-sprof sb-gmp sb-mpfr sb-capstone sb-grovel"
         ;;
 esac
 

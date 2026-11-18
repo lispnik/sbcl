@@ -15,7 +15,8 @@ set -e
 # then make-contrib.lisp is started again.
 #
 # Modules that REQUIRE other modules at build time are not handled yet.
-# "asdf" builds ASDF and UIOP, which are compiled directly.
+# "asdf" builds ASDF and UIOP, which are compiled directly, and "sb-posix"
+# builds the small subset of it that DOS can support.
 #
 # The results are obj/sbcl-home/contrib/NAME.fasl and NAME.asd.  On DOS,
 # SBCL finds them by (require :NAME) when they are in a directory CONTRIB
@@ -85,8 +86,40 @@ END
         --stdin 'output\contrib.lsp' "$dos_sbcl" > output/contrib-asdf.log
 }
 
+# SB-POSIX on DOS is one file: the subset in contrib/sb-posix/dos.lisp.
+build_posix() {
+    cat > output/contrib.lsp <<'END'
+(let ((dir (concatenate 'string (sb-unix:posix-getcwd) "\\obj\\sbcl-home\\contrib\\")))
+  (ensure-directories-exist (sb-ext:parse-native-namestring (concatenate 'string dir "x")))
+  (multiple-value-bind (output warnings failure)
+      (compile-file "contrib/sb-posix/dos.lisp"
+                    :output-file (sb-ext:parse-native-namestring (concatenate 'string dir "sb-posix.fasl")))
+    (declare (ignore warnings))
+    (when (or failure (null output)) (sb-ext:exit :code 1 :abort t))
+    (load output))
+  (with-open-file (asd (sb-ext:parse-native-namestring (concatenate 'string dir "sb-posix.asd"))
+                       :direction :output :if-exists :supersede)
+    (format asd "(defsystem :sb-posix :class require-system)~%")))
+(sb-ext:exit :code 0)
+END
+    mkdir -p obj/sbcl-home/contrib
+    $dos_run --copy-in "src/runtime/sbcl.exe src/runtime/hdpmi32.exe output/sbcl.core output/contrib.lsp
+                        contrib/sb-posix/dos.lisp obj/sbcl-home" \
+        --copy-out "obj/sbcl-home/contrib" \
+        --stdin 'output\contrib.lsp' "$dos_sbcl" > output/contrib-sb-posix.log
+}
+
 for contrib in "$@"; do
     echo "//building contrib $contrib under DOS"
+    if [ $contrib = sb-posix ]; then
+        if build_posix && [ -f obj/sbcl-home/contrib/sb-posix.fasl ]; then
+            ls -l obj/sbcl-home/contrib/sb-posix.fasl
+            continue
+        fi
+        tail -40 output/contrib-sb-posix.log
+        echo "building sb-posix failed; see output/contrib-sb-posix.log"
+        exit 1
+    fi
     if [ $contrib = asdf ]; then
         if build_asdf && [ -f obj/sbcl-home/contrib/asdf.fasl ]; then
             ls -l obj/sbcl-home/contrib/uiop.fasl obj/sbcl-home/contrib/asdf.fasl
