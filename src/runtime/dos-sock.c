@@ -29,6 +29,8 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <signal.h>
+#include <dos.h>
 #include "dos-sock.h"
 
 extern void __cdecl dos_prefault(void *address, size_t len);
@@ -65,7 +67,26 @@ static int startup(void)
         _watt_do_exit = 0;              /* report failure rather than exit */
         startup_length = 0;
         _outch = keep_char;
-        started = sock_init() == 0 ? 1 : -1;
+        /* Watt-32 also takes over Ctrl-C: it turns DOS's break checking
+         * on, so that DOS looks for Ctrl-C in the keyboard buffer during
+         * every call, and installs handlers that end the program.  Lisp
+         * programs read the keyboard themselves (an editor has a use for
+         * Ctrl-C), so both are put back as they were. */
+        {
+            union REGS regs;
+            void (*on_interrupt)(int) = signal(SIGINT, SIG_DFL);
+            void (*brk)(int) = signal(SIGBREAK, SIG_DFL);
+            int checking;
+            regs.w.ax = 0x3300;         /* DOS: get the break-checking state */
+            intdos(&regs, &regs);
+            checking = regs.h.dl;
+            started = sock_init() == 0 ? 1 : -1;
+            regs.w.ax = 0x3301;
+            regs.h.dl = checking;
+            intdos(&regs, &regs);
+            signal(SIGINT, on_interrupt);
+            signal(SIGBREAK, brk);
+        }
         _outch = console;
         if (started < 0 && startup_length) {
             startup_text[startup_length] = 0;

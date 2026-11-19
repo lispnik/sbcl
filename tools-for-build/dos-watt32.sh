@@ -64,7 +64,7 @@ od -An -v -tx1 $B/gen/asmpkt.bin | sed 's/\([0-9a-f][0-9a-f]\)/0x\1,/g' > $B/gen
 echo "const char *w32_cflags = \"$CFLAGS\"; const char *w32_cc = \"wcc386\";" > $B/gen/build/watcom/flat/cflags.h
 printf '%s' "$CFLAGS" | od -An -v -tx1 | sed 's/\([0-9a-f][0-9a-f]\)/0x\1,/g' > $B/gen/build/watcom/flat/cflagsbf.h
 
-# 3b. One correction, made to copies of two files (the Watt-32 tree itself
+# 3b. One correction, made to copies of the files (the Watt-32 tree itself
 #     is left alone).  The real-mode buffer reserves ETH_MAX+10 bytes for
 #     the transmit packet, but _eth_init() clears sizeof(union link_Packet)
 #     bytes there, which is larger; the excess overwrites the DOS memory
@@ -76,6 +76,15 @@ sed 's/rdata_size += PKT_TMP_SIZE + ETH_MAX + 10;/rdata_size += PKT_TMP_SIZE + s
     $WATT/src/pcpkt2.c > $B/patched/pcpkt2.c
 cmp -s $WATT/src/pcpkt2.c $B/patched/pcpkt2.c && { echo "the pcpkt2.c correction no longer applies"; exit 1; }
 
+# 3c. And one change of behaviour.  While it waits, Watt-32 asks the C
+#     library whether a key has been pressed, "to enable ^C generation":
+#     DOS then takes a Ctrl-C out of the keyboard buffer and raises its
+#     break interrupt.  A Lisp program reads the keyboard itself -- Ctrl-C
+#     is an ordinary key to an editor -- so Watt-32 only looks at the
+#     BIOS's buffer, as it already does first.
+sed 's/^  return kbhit();$/  return (1);/' $WATT/src/misc.c > $B/patched/misc.c
+cmp -s $WATT/src/misc.c $B/patched/misc.c && { echo "the misc.c change no longer applies"; exit 1; }
+
 # 4. Compile.  The source list is makefile.all's CORE, BSD, BIND and ZLIB lists.
 sources=`sed -n '/^CORE_SOURCE *=/,/^$/p;/^BSD_SOURCE *=/,/^$/p;/^BIND_SOURCE *=/,/^$/p;/^ZLIB_SOURCE *=/,/^$/p' $WATT/src/makefile.all \
          | tr -s ' \\\\=' '\n\n\n' | grep '\.c$'`
@@ -84,14 +93,15 @@ cd $WATT/src
 fail=
 for c in $sources; do
     o=$B/obj/`basename $c .c`.obj
-    [ $o -nt $c ] && continue
-    if [ $c = pcpkt.c ]; then
-        # compiled from inside the directory of copies, so that its
+    if [ $c = pcpkt.c ] || [ $c = misc.c ]; then
+        [ $o -nt $B/patched/$c ] && [ $o -nt $0 ] && continue
+        # compiled from inside the directory of copies, so that pcpkt.c's
         # #include "pcpkt2.c" finds the corrected one
-        (cd $B/patched && wcc386 $CFLAGS -i=$B/gen -i=$WATT/src -i=$WATT/inc -fo=$o pcpkt.c) \
-            > $B/obj/pcpkt.err 2>&1 || fail="$fail $c"
+        (cd $B/patched && wcc386 $CFLAGS -i=$B/gen -i=$WATT/src -i=$WATT/inc -fo=$o $c) \
+            > $B/obj/`basename $c .c`.err 2>&1 || fail="$fail $c"
         continue
     fi
+    [ $o -nt $c ] && continue
     wcc386 $CFLAGS -i=$B/gen -i=. -i=../inc -fo=$o $c > $B/obj/`basename $c .c`.err 2>&1 || fail="$fail $c"
 done
 [ -z "$fail" ] || { echo "failed:$fail"; exit 1; }
