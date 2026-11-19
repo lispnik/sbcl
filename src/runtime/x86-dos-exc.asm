@@ -42,6 +42,20 @@ _dos_exc_ds:    dd 0            ; flat data selector, set by dos-os.c
 _dos_exc_depth: dd 0            ; number of context slots in use
 exc_slots:      times CTX_SIZE*NSLOTS db 0
 
+; Ctrl-Break (see dos_tick_entry below)
+global _dos_tick_old, _dos_break_pending, _dos_break_chord, _dos_break_sigbit
+extern _dos_sigmask
+_dos_tick_old:      dd 0            ; the timer interrupt's previous handler:
+                    dd 0            ;   offset, then selector
+_dos_break_pending: dd 0            ; an interrupt has been asked for
+_dos_break_chord:   dd 1            ; Ctrl-Alt-Shift asks for one too
+_dos_break_sigbit:  dd 0            ; SIGINT's bit in a signal mask
+break_chord_was:    dd 0
+break_inflight:     dd 0            ; dos_break_entry has yet to pick these up:
+break_eip:          dd 0
+break_eax:          dd 0
+break_esp:          dd 0
+
 segment _TEXT public align=16 class=CODE use32
 group DGROUP _DATA
 extern _dos_exception_dispatch
@@ -118,6 +132,134 @@ dos_exc_trampoline:
     push ebx
     call _dos_exception_dispatch    ; never returns
     hlt
+
+; Ctrl-Break: interrupting Lisp that is running.
+;
+; Nothing in a loop that makes no calls will ever look at the keyboard, so
+; the interrupt has to come from outside it.  The timer interrupt (18.2
+; times a second) is handled here first.  When an interrupt has been asked
+; for -- the BIOS has seen Ctrl-Break and set its flag at 0040:0071, or
+; Ctrl, Alt and Shift are all down, or DOS has seen Ctrl-C (dos_int23_entry)
+; -- and the timer has interrupted our own code, the address that code will
+; resume at is changed to dos_break_entry, which delivers SIGINT as the
+; exception stub above delivers a trap: the context it saves resumes the
+; interrupted code exactly, should the handler return.
+;
+; HDPMI calls the handler on its locked stack with, above the IRETD frame,
+; the address the interrupted program resumes at (found by looking; it is
+; not in the DPMI specification).  That is only our code when its selector
+; is ours and the frame is the first thing on that stack; in every other
+; case (the timer interrupted DOS, the BIOS, or the host) the request stays
+; pending for a later tick.  It also stays pending while SIGINT is blocked.
+global _dos_tick_entry
+_dos_tick_entry:
+    push eax
+    push ds
+    mov ax, [cs:_dos_exc_ds]
+    mov ds, ax
+    test byte [0x471], 0x80         ; the BIOS's Ctrl-Break flag
+    jz .chord
+    and byte [0x471], 0x7F
+    mov dword [_dos_break_pending], 1
+.chord:
+    cmp dword [_dos_break_chord], 0
+    je .nochord
+    mov al, [0x417]                 ; shift states: right, left, Ctrl, Alt
+    mov ah, al
+    and ah, 0x0C
+    cmp ah, 0x0C
+    jne .nochord
+    test al, 0x03
+    jz .nochord
+    cmp dword [break_chord_was], 0  ; once for each time it is pressed
+    jne .deliver
+    mov dword [break_chord_was], 1
+    mov dword [_dos_break_pending], 1
+    jmp .deliver
+.nochord:
+    mov dword [break_chord_was], 0
+.deliver:
+    cmp dword [_dos_break_pending], 0
+    je .chain
+    cmp dword [break_inflight], 0
+    jne .chain
+    mov eax, [_dos_sigmask]
+    test eax, [_dos_break_sigbit]
+    jnz .chain
+    ; [esp] ds, eax, the IRETD frame (EIP CS EFLAGS), then the program's EIP and CS
+    mov eax, ss
+    lsl eax, eax
+    jnz .chain
+    inc eax
+    sub eax, esp
+    cmp eax, 28
+    jne .chain
+    mov eax, cs
+    cmp ax, [esp+24]
+    jne .chain
+    mov eax, [esp+20]
+    mov [break_eip], eax
+    mov dword [esp+20], dos_break_entry
+    mov dword [break_inflight], 1
+    mov dword [_dos_break_pending], 0
+.chain:
+    pop ds
+    pop eax
+    jmp far [cs:_dos_tick_old]
+
+; Reached in place of the interrupted instruction, with every register and
+; flag as that instruction would have found them.  Nothing is pushed until
+; the stack pointer has been moved clear of the interrupted code's stack.
+dos_break_entry:
+    mov [break_eax], eax
+    mov [break_esp], esp
+    lea esp, [esp-64]
+    pushfd
+    mov eax, [_dos_exc_depth]
+    cmp eax, NSLOTS
+    jae .full
+    inc dword [_dos_exc_depth]
+    imul eax, eax, CTX_SIZE
+    add eax, exc_slots
+    pop dword [eax+CTX_EFL]
+    mov [eax+CTX_ECX], ecx
+    mov [eax+CTX_EDX], edx
+    mov [eax+CTX_EBX], ebx
+    mov [eax+CTX_EBP], ebp
+    mov [eax+CTX_ESI], esi
+    mov [eax+CTX_EDI], edi
+    mov ecx, [break_eax]
+    mov [eax+CTX_EAX], ecx
+    mov ecx, [break_esp]
+    mov [eax+CTX_ESP], ecx
+    mov ecx, [break_eip]
+    mov [eax+CTX_EIP], ecx
+    mov dword [eax+CTX_TRAP], 0x100 ; not a processor exception: Ctrl-Break
+    mov dword [eax+CTX_ERR], 0
+    mov dword [eax+CTX_CR2], 0
+    mov dword [break_inflight], 0
+    mov ebx, eax
+    and esp, ~15
+    jmp dos_exc_trampoline
+.full:                              ; no room to deliver it: carry on
+    popfd
+    mov esp, [break_esp]
+    mov eax, [break_eax]
+    mov dword [break_inflight], 0
+    jmp [break_eip]
+
+; DOS has seen Ctrl-C, and would end the program.  Returning with IRETD
+; tells it to carry on instead; the interrupt is delivered by the timer.
+global _dos_int23_entry
+_dos_int23_entry:
+    push eax
+    push ds
+    mov ax, [cs:_dos_exc_ds]
+    mov ds, ax
+    mov dword [_dos_break_pending], 1
+    pop ds
+    pop eax
+    iretd
 
 ; void dos_resume(os_context_t *)  -- never returns
 global _dos_resume

@@ -280,7 +280,8 @@ void* load_core_bytes(int fd, os_vm_offset_t offset, os_vm_address_t addr, os_vm
 /* There is one thread and no asynchronous delivery: a "signal" is either
  * a processor exception or a raise().  Bit N of a sigset_t is signal N. */
 static struct sigaction dos_sigactions[NSIG];
-static sigset_t dos_sigmask, dos_sigpending;
+sigset_t dos_sigmask;             /* (the timer handler in x86-dos-exc.asm reads it) */
+static sigset_t dos_sigpending;
 
 extern unsigned dos_exc_ds, dos_exc_depth;
 extern void dos_resume(os_context_t *);
@@ -304,6 +305,7 @@ int sigaction(int sig, const struct sigaction *new, struct sigaction *old)
 }
 
 void dos_exception_dispatch(os_context_t *slot);
+unsigned dos_break_count;        /* how many Ctrl-Breaks have been delivered */
 
 /* An exception nothing wanted: say as much as we can about it.  Addresses
  * in the runtime can be matched against the linker map (dos-obj/sbcl.map)
@@ -413,6 +415,11 @@ void dos_exception_dispatch(os_context_t *slot)
     switch (context.trapno) {
     case 1: case 3: sig = SIGTRAP; break;
     case 6: sig = SIGILL; break;
+    case 0x100:                 /* Ctrl-Break: see dos_break_entry */
+        /* (before Lisp has a handler for it there is nothing to interrupt) */
+        if (dos_sigactions[SIGINT].sa_handler == SIG_DFL) dos_resume(&context);
+        sig = SIGINT; dos_break_count++;
+        break;
     case 0: sig = SIGFPE; info.si_code = FPE_INTDIV; break;
     case 4: sig = SIGFPE; info.si_code = FPE_INTOVF; break;
     case 16: {
@@ -431,6 +438,18 @@ void dos_exception_dispatch(os_context_t *slot)
     }
     info.si_signo = sig;
     deliver_signal(sig, &info, &context);
+    /* Signals raised while that handler had them blocked are delivered now
+     * that its mask is gone, as they would be on return from a real signal
+     * handler -- and with the context of the interrupted code, which is
+     * what tells the runtime whether it may run them yet.  (SIGINT's
+     * handler works this way: it raises SIGURG to do the interrupting.) */
+    for (sig = 1; sig < NSIG; sig++)
+        if ((dos_sigpending & ~dos_sigmask) & (1UL << sig)) {
+            dos_sigpending &= ~(1UL << sig);
+            memset(&info, 0, sizeof info);
+            info.si_signo = sig;
+            deliver_signal(sig, &info, &context);
+        }
     dos_resume(&context);
 }
 
@@ -461,6 +480,104 @@ os_install_interrupt_handlers(void)
 #if INSTALL_SIG_MEMORY_FAULT_HANDLER
     ll_install_handler(SIG_MEMORY_FAULT, sigsegv_handler);
 #endif
+}
+
+/* ------------------------------------------------------------ Ctrl-Break */
+
+/* The assembly side is described in x86-dos-exc.asm.  Three vectors are
+ * taken: the timer (protected mode), which delivers the interrupt; DOS's
+ * Ctrl-C interrupt 23h (protected mode: the host reflects it), so that
+ * DOS does not end the program; and the BIOS's Ctrl-Break interrupt 1Bh
+ * (real mode), so that DOS does not hear of Ctrl-Break and report it as a
+ * second Ctrl-C at its next call.  The last is pointed at an IRET in the
+ * BIOS ROM, which is still there if we should die without restoring it. */
+extern void dos_tick_entry(void), dos_int23_entry(void);
+extern struct { unsigned offset, selector; } dos_tick_old;
+extern unsigned dos_break_pending, dos_break_sigbit;
+static unsigned old_int23_offset, old_int23_selector, old_int1b_segment, old_int1b_offset;
+static int break_installed;
+
+static void get_pm_vector(int n, unsigned *selector, unsigned *offset)
+{
+    union REGS r;
+    memset(&r, 0, sizeof r);
+    r.w.ax = 0x204; r.h.bl = n;
+    int386(0x31, &r, &r);
+    *selector = r.w.cx; *offset = r.x.edx;
+}
+static void set_pm_vector(int n, unsigned selector, unsigned offset)
+{
+    union REGS r;
+    memset(&r, 0, sizeof r);
+    r.w.ax = 0x205; r.h.bl = n; r.w.cx = selector; r.x.edx = offset;
+    int386(0x31, &r, &r);
+}
+static void set_rm_vector(int n, unsigned segment, unsigned offset)
+{
+    union REGS r;
+    memset(&r, 0, sizeof r);
+    r.w.ax = 0x201; r.h.bl = n; r.w.cx = segment; r.w.dx = offset;
+    int386(0x31, &r, &r);
+}
+
+/* Real-mode interrupt vectors.  Lisp programs point them at handlers in
+ * DOS memory of their own (a keyboard intercept, a critical error handler),
+ * and that memory is freed when the program ends, however it ends.  A
+ * vector still pointing there afterwards takes the machine down the next
+ * time the interrupt happens, so the table is remembered at startup and
+ * anything changed since is put back on the way out -- which covers the
+ * exits Lisp's own cleanup does not run for (a crash in the runtime). */
+static unsigned saved_vectors[256];
+static int vectors_saved;
+
+static void dos_save_vectors(void)
+{
+    memcpy(saved_vectors, (void *)0, sizeof saved_vectors);
+    vectors_saved = 1;
+}
+static void dos_restore_vectors(void)
+{
+    unsigned *table = (unsigned *)0;
+    int n;
+    if (!vectors_saved) return;
+    vectors_saved = 0;
+    for (n = 0; n < 256; n++) {
+        if (n >= 0x22 && n <= 0x24) continue;   /* DOS's own, restored by DOS */
+        if (table[n] != saved_vectors[n])
+            set_rm_vector(n, saved_vectors[n] >> 16, saved_vectors[n] & 0xFFFF);
+    }
+}
+
+static void dos_remove_break(void)
+{
+    if (!break_installed) return;
+    break_installed = 0;
+    set_pm_vector(8, dos_tick_old.selector, dos_tick_old.offset);
+    set_pm_vector(0x23, old_int23_selector, old_int23_offset);
+    if (old_int1b_segment || old_int1b_offset)
+        set_rm_vector(0x1B, old_int1b_segment, old_int1b_offset);
+}
+
+static void dos_install_break(void)
+{
+    union REGS r;
+    unsigned char *rom = (unsigned char *)0xF0000;
+    unsigned i;
+    if (getenv("SBCL_NO_BREAK")) return;
+    dos_break_sigbit = 1UL << SIGINT;
+    get_pm_vector(8, &dos_tick_old.selector, &dos_tick_old.offset);
+    set_pm_vector(8, get_cs(), (unsigned)dos_tick_entry);
+    get_pm_vector(0x23, &old_int23_selector, &old_int23_offset);
+    set_pm_vector(0x23, get_cs(), (unsigned)dos_int23_entry);
+    for (i = 0; i < 0x10000 && rom[i] != 0xCF; i++) ;
+    if (i < 0x10000) {
+        memset(&r, 0, sizeof r);
+        r.w.ax = 0x200; r.h.bl = 0x1B;
+        int386(0x31, &r, &r);
+        old_int1b_segment = r.w.cx; old_int1b_offset = r.w.dx;
+        set_rm_vector(0x1B, 0xF000, i);
+    }
+    break_installed = 1;        /* (removed by dos_record_exit_code) */
 }
 
 /* ------------------------------------------------------------ startup */
@@ -534,6 +651,8 @@ int os_preinit(char *argv[], char *envp[])
     set_exception_handler(13, dos_exc_entry_13);
     set_exception_handler(14, dos_exc_entry_14);
     set_exception_handler(16, dos_exc_entry_16);
+    dos_save_vectors();
+    dos_install_break();
 
     allocate_hardwired_spaces(1);
     return 1;                   /* the hardwired spaces now exist */
@@ -569,6 +688,8 @@ void dos_record_exit_code(int code)
 {
     const char *name = getenv("SBCL_DOS_EXIT_CODE_FILE");
     FILE *f;
+    dos_remove_break();         /* every way out comes through here */
+    dos_restore_vectors();
     if (name && (f = fopen(name, "w")) != 0) {
         fprintf(f, "%d\n", code);
         fclose(f);
