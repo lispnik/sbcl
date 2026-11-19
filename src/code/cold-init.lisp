@@ -473,6 +473,12 @@ process to continue normally."
     (sb-debug::disable-debugger))
   (sb-vm::setup-cpu-specific-routines)
   (call-hooks "initialization" *init-hooks*)
+  ;; From here on there is something for Ctrl-Break to interrupt: until
+  ;; this is set the runtime drops such requests (x86-dos-exc.asm), so that
+  ;; one made while Lisp is starting does not open the debugger half way.
+  #+dos
+  (let ((ready (find-foreign-symbol-address "dos_break_ready")))
+    (when ready (setf (sap-ref-32 (int-sap ready) 0) 1)))
   #+sb-thread (finalizer-thread-start))
 
 ;;;; some support for any hapless wretches who end up debugging cold

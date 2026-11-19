@@ -50,6 +50,13 @@ _dos_tick_old:      dd 0            ; the timer interrupt's previous handler:
 _dos_break_pending: dd 0            ; an interrupt has been asked for
 _dos_break_chord:   dd 1            ; Ctrl-Alt-Shift asks for one too
 _dos_break_sigbit:  dd 0            ; SIGINT's bit in a signal mask
+global _dos_break_ready
+_dos_break_ready:   dd 0            ; Lisp has started, and says it may be interrupted
+; single-stepping (see dos_single_step below)
+global _dos_stepping
+_dos_stepping:      dd 0
+step_esp:           dd 0
+step_regs:          dd 0
 break_chord_was:    dd 0
 break_inflight:     dd 0            ; dos_break_entry has yet to pick these up:
 break_eip:          dd 0
@@ -127,6 +134,8 @@ exc_common:
     int 0x21
 
 dos_exc_trampoline:
+    cmp dword [_dos_stepping], 0
+    jne step_done
     fnsave [ebx+CTX_FPU]            ; also leaves the FPU in its initial state
     cld
     push ebx
@@ -157,6 +166,11 @@ _dos_tick_entry:
     push ds
     mov ax, [cs:_dos_exc_ds]
     mov ds, ax
+    cmp dword [_dos_break_ready], 0 ; while Lisp is starting, a request is dropped
+    jne .watch
+    and byte [0x471], 0x7F
+    jmp .chain
+.watch:
     test byte [0x471], 0x80         ; the BIOS's Ctrl-Break flag
     jz .chord
     and byte [0x471], 0x7F
@@ -256,10 +270,64 @@ _dos_int23_entry:
     push ds
     mov ax, [cs:_dos_exc_ds]
     mov ds, ax
-    mov dword [_dos_break_pending], 1
+    mov eax, [_dos_break_ready]
+    mov [_dos_break_pending], eax   ; (nothing to interrupt while Lisp is starting)
     pop ds
     pop eax
     iretd
+
+; int dos_single_step(unsigned regs[13]): run one instruction of other code.
+;
+; REGS is the start of an os_context_t: EAX ECX EDX EBX ESP EBP ESI EDI EIP
+; EFLAGS, then three words that are filled in (trap number, error code,
+; fault address).  The registers are loaded from it and the instruction at
+; its EIP is executed with the trap flag set, so that the processor raises
+; exception 1 when it has done that one instruction.  The exception stub
+; above saves the registers as it always does, and its trampoline -- seeing
+; that a step is in progress -- copies them back to REGS and returns here
+; instead of delivering a signal.  Any other exception the instruction
+; raises ends the step the same way.  Returns the exception number: 1 for a
+; step completed.  The code being stepped needs a stack of its own (REGS'
+; ESP); a few words below its stack pointer are written here.
+global _dos_single_step
+_dos_single_step:
+    push ebp
+    push ebx
+    push esi
+    push edi
+    mov [step_esp], esp
+    mov eax, [esp+20]
+    mov [step_regs], eax
+    mov dword [_dos_stepping], 1
+    mov esp, [eax+CTX_ESP]
+    mov edx, [eax+CTX_EFL]
+    or edx, 0x100                   ; the trap flag
+    push edx
+    push cs
+    push dword [eax+CTX_EIP]
+    mov ecx, [eax+CTX_ECX]
+    mov edx, [eax+CTX_EDX]
+    mov ebx, [eax+CTX_EBX]
+    mov ebp, [eax+CTX_EBP]
+    mov esi, [eax+CTX_ESI]
+    mov edi, [eax+CTX_EDI]
+    mov eax, [eax+CTX_EAX]
+    iretd
+step_done:                          ; from dos_exc_trampoline: EBX is the context slot
+    mov dword [_dos_stepping], 0
+    dec dword [_dos_exc_depth]
+    cld
+    mov esi, ebx
+    mov edi, [step_regs]
+    mov ecx, 13
+    rep movsd
+    mov eax, [ebx+CTX_TRAP]
+    mov esp, [step_esp]
+    pop edi
+    pop esi
+    pop ebx
+    pop ebp
+    ret
 
 ; void dos_resume(os_context_t *)  -- never returns
 global _dos_resume
