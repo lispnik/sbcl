@@ -124,10 +124,40 @@ static void flush_disk_buffers(void)
     int386(0x21, &r, &r);
 }
 
+/* Making a directory entry can lose the drive's current directory: when
+ * a long-named entry does not fit in the directory's last cluster and the
+ * directory has to grow, DOS (FreeDOS 1.4 with DOSLFN) is left with the
+ * drive's current directory as "D:" -- the root, in effect.  COMMAND.COM
+ * then cannot find the batch file it is running, and relative names mean
+ * something else.  So whatever may add an entry notes the current
+ * directory of the drive concerned first and puts it back if it changed. */
+static int path_drive(const char *path)         /* 1 = A:, 0 = the current drive */
+{
+    return (path && path[0] && path[1] == ':') ? ((path[0] | 0x20) - 'a' + 1) : 0;
+}
+static void keep_directory(const char *path, char *kept)
+{
+    if (!_getdcwd(path_drive(path), kept, PATH_MAX)) kept[0] = 0;
+}
+static void restore_directory(const char *path, const char *kept)
+{
+    char now[PATH_MAX];
+    int saved_errno = errno;
+    if (kept[0] && _getdcwd(path_drive(path), now, PATH_MAX) && strcmp(now, kept) != 0)
+        chdir(kept);
+    errno = saved_errno;
+}
+
 int dosw_open(const char *path, int flags, int mode)
 {
-    if (flags & O_CREAT) flush_disk_buffers();
-    return open(path, flags | O_BINARY, mode);
+    char kept[PATH_MAX];
+    int fd;
+    if (!(flags & O_CREAT)) return open(path, flags | O_BINARY, mode);
+    flush_disk_buffers();
+    keep_directory(path, kept);
+    fd = open(path, flags | O_BINARY, mode);
+    restore_directory(path, kept);
+    return fd;
 }
 int dosw_close(int fd) { return dos_socket_p(fd) ? dos_sock_close(fd) : close(fd); }
 int dosw_read(int fd, void *buf, unsigned n)
@@ -153,14 +183,28 @@ int dosw_access(const char *path, int mode) { return access(path, mode); }
 int dosw_dup(int fd) { return dup(fd); }
 int dosw_rename(const char *from, const char *to)
 {
+    char kept[PATH_MAX];
+    int result;
     flush_disk_buffers();
+    keep_directory(to, kept);
     /* POSIX rename replaces an existing target; DOS refuses to */
-    if (rename(from, to) == 0) return 0;
-    if (access(to, F_OK) == 0 && unlink(to) == 0) return rename(from, to);
-    return -1;
+    result = rename(from, to);
+    if (result != 0 && access(to, F_OK) == 0 && unlink(to) == 0) result = rename(from, to);
+    restore_directory(to, kept);
+    return result == 0 ? 0 : -1;
 }
 int dosw_unlink(const char *path) { flush_disk_buffers(); return unlink(path); }
-int dosw_mkdir(const char *path, int mode) { (void)mode; flush_disk_buffers(); return mkdir(path); }
+int dosw_mkdir(const char *path, int mode)
+{
+    char kept[PATH_MAX];
+    int result;
+    (void)mode;
+    flush_disk_buffers();
+    keep_directory(path, kept);
+    result = mkdir(path);
+    restore_directory(path, kept);
+    return result;
+}
 int dosw_rmdir(const char *path) { flush_disk_buffers(); return rmdir(path); }
 char *dosw_getcwd(char *buf, size_t size)
 {
@@ -186,8 +230,11 @@ int sb_mkstemp(char *template, int mode)
     for (tries = 0; tries < 1000; tries++) {
         int fd;
         sprintf(template + len - 6, "%06u", (unsigned)((time(0) * 31 + counter++) % 1000000));
+        char kept[PATH_MAX];
         flush_disk_buffers();
+        keep_directory(template, kept);
         fd = open(template, O_CREAT | O_EXCL | O_RDWR | O_BINARY, mode);
+        restore_directory(template, kept);
         if (fd >= 0 || errno != EEXIST) return fd;
     }
     return -1;
