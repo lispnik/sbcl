@@ -2928,6 +2928,20 @@ Legal values for OFFSET are -4, -8, -12, ..."
       (error "unaligned function entry ~S ~S" code-object fun-index))
     (make-descriptor (logior fun sb-vm:fun-pointer-lowtag))))
 
+;;; DOS: the start of static space is written all the time -- the
+;;; allocation regions, the pseudo-atomic flag and the static symbols'
+;;; values are there -- and the assembly routines used to follow straight
+;;; on, in the same page.  A write to a page that holds code is taken for
+;;; self-modifying code: by an emulator (QEMU: 0.8 us a write, against
+;;; 0.01 us elsewhere, which made a cons cost 2.5 us) and by processors
+;;; with a trace cache.  So the routines get pages of their own.
+#+dos
+(defun pad-static-space-to-page ()
+  (let ((gap (mod (- (* (gspace-free-word-index *static*) sb-vm:n-word-bytes)) 4096)))
+    (when (plusp gap)                   ; a vector of words that fills the rest of the page
+      (let ((words (/ (- gap (* sb-vm:vector-data-offset sb-vm:n-word-bytes)) sb-vm:n-word-bytes)))
+        (allocate-vector sb-vm:simple-array-unsigned-byte-32-widetag words words *static*)))))
+
 (define-cold-fop (fop-assembler-code)
   (aver (not *assembler-routines*))
   (let* ((n-routines (read-word-arg (fasl-input-stream)))
@@ -2943,11 +2957,15 @@ Legal values for OFFSET are -4, -8, -12, ..."
                            #+darwin-jit 0)
                         *read-only*
                         *static*)))
+         (asm-code-on-its-own-pages
+          (progn #+dos (when (eq space *static*) (pad-static-space-to-page)) t))
          (asm-code
           (allocate-cold-descriptor
                   space
                   (+ (ash header-n-words sb-vm:word-shift) rounded-length)
                   sb-vm:other-pointer-lowtag)))
+    (declare (ignore asm-code-on-its-own-pages))
+    #+dos (when (eq space *static*) (pad-static-space-to-page))
     (setf *assembler-routines* asm-code)
     (write-code-header-words asm-code header-n-words rounded-length)
     (let ((start (+ (descriptor-byte-offset asm-code)

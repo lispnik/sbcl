@@ -32,6 +32,7 @@
 #include <i86.h>
 #include <conio.h>
 #include <direct.h>
+#include <dos.h>
 #include <dirent.h>
 #include <math.h>
 #include <process.h>
@@ -148,11 +149,62 @@ static void restore_directory(const char *path, const char *kept)
     errno = saved_errno;
 }
 
+/* With a long file name driver loaded the C library does everything by
+ * the long-name calls (INT 21h, AH=71h), and DOSLFN takes its time over
+ * them: 7.7 ms to look a name up in a directory of thirty files, where
+ * the plain call takes 1.1 ms; 30 ms to say that a file is not there.
+ * Lisp looks a great many names up.  A name whose every part is a valid
+ * 8.3 name means the same file by either kind of call -- a file's short
+ * name is its long name whenever the long name is short enough -- so for
+ * looking up such a name, and opening a file that exists, the library is
+ * told for the moment that there is no driver.  (Not for creating: the
+ * long-name call keeps the case the name was written in.) */
+extern unsigned char dos_uselfn;        /* the C library's "use the long-name calls" */
+#pragma aux dos_uselfn "__uselfn";
+
+static int short_name_char_p(int c)
+{
+    return (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9')
+        || (c && strchr("!#$%&'()-@^_`{}~", c));
+}
+static int short_name_p(const char *path)
+{
+    if (path[0] && path[1] == ':') path += 2;
+    while (*path) {
+        int base = 0, ext = 0;
+        if (*path == '\\' || *path == '/') { path++; continue; }
+        if (path[0] == '.' && (path[1] == 0 || path[1] == '\\' || path[1] == '/')) { path++; continue; }
+        if (path[0] == '.' && path[1] == '.' && (path[2] == 0 || path[2] == '\\' || path[2] == '/')) {
+            path += 2;
+            continue;
+        }
+        while (short_name_char_p((unsigned char)*path)) { path++; base++; }
+        if (base < 1 || base > 8) return 0;
+        if (*path == '.') {
+            path++;
+            while (short_name_char_p((unsigned char)*path)) { path++; ext++; }
+            if (ext < 1 || ext > 3) return 0;
+        }
+        if (*path && *path != '\\' && *path != '/') return 0;
+    }
+    return 1;
+}
+/* Run CALL, by the short-name calls if PATH allows. */
+#define LOOKING_UP(path, call) do {                             \
+        unsigned char lfn_ = dos_uselfn;                        \
+        if (lfn_ && short_name_p(path)) dos_uselfn = 0;         \
+        call;                                                   \
+        dos_uselfn = lfn_;                                      \
+    } while (0)
+
 int dosw_open(const char *path, int flags, int mode)
 {
     char kept[PATH_MAX];
     int fd;
-    if (!(flags & O_CREAT)) return open(path, flags | O_BINARY, mode);
+    if (!(flags & O_CREAT)) {
+        LOOKING_UP(path, fd = open(path, flags | O_BINARY, mode));
+        return fd;
+    }
     flush_disk_buffers();
     keep_directory(path, kept);
     fd = open(path, flags | O_BINARY, mode);
@@ -179,7 +231,12 @@ long dosw_lseek(int fd, long offset, int whence)
     return lseek(fd, offset, whence);
 }
 int dosw_isatty(int fd) { return dos_socket_p(fd) ? 0 : isatty(fd); }
-int dosw_access(const char *path, int mode) { return access(path, mode); }
+int dosw_access(const char *path, int mode)
+{
+    int result;
+    LOOKING_UP(path, result = access(path, mode));
+    return result;
+}
 int dosw_dup(int fd) { return dup(fd); }
 int dosw_rename(const char *from, const char *to)
 {
@@ -245,7 +302,9 @@ char *wrapped_readlink(char *path) { (void)path; errno = EINVAL; return 0; }
 
 char *sb_realpath(char *path)
 {
-    if (access(path, F_OK) != 0) return 0;
+    int found;
+    LOOKING_UP(path, found = access(path, F_OK));
+    if (found != 0) return 0;
     return _fullpath(0, path, 0);
 }
 
@@ -267,6 +326,59 @@ static void copy_to_stat_wrapper(struct stat_wrapper *to, struct stat *from)
     to->wrapped_st_ctime = from->st_ctime;
 }
 
+/* stat() for a name that the short-name calls can look up: one "find
+ * first" has everything stat() reports, where the C library makes several
+ * calls -- and several more before it says that there is no such file
+ * (8 ms; this takes 2).  Returns 1 if it has answered -- *RET is then what
+ * stat() would return -- and 0 for whatever is not simply a file or a
+ * directory in a directory: a drive's root, "." and "..", a device. */
+static int short_stat(const char *path, struct stat_wrapper *buf, int *ret)
+{
+    struct find_t found;
+    struct tm when;
+    const char *name = path, *p, *dot;
+    unsigned char lfn = dos_uselfn;
+    unsigned failed;
+    size_t len;
+    if (!lfn || !short_name_p(path)) return 0;
+    for (p = path; *p; p++)
+        if (*p == '\\' || *p == '/' || *p == ':') name = p + 1;
+    if (!*name || name[0] == '.') return 0;
+    dos_uselfn = 0;
+    failed = _dos_findfirst(path, _A_SUBDIR | _A_RDONLY | _A_HIDDEN | _A_SYSTEM | _A_ARCH, &found);
+    if (!failed) _dos_findclose(&found);
+    dos_uselfn = lfn;
+    if (failed) { errno = ENOENT; *ret = -1; return 1; }
+    if (found.attrib & (0x40 | _A_VOLID)) return 0;
+    memset(buf, 0, sizeof *buf);
+    if (found.attrib & _A_SUBDIR) {
+        buf->wrapped_st_mode = S_IFDIR | 0777;
+    } else {
+        buf->wrapped_st_mode = S_IFREG | 0444 | ((found.attrib & _A_RDONLY) ? 0 : 0222);
+        len = strlen(name);
+        dot = len > 4 ? name + len - 4 : "";
+        if (!stricmp(dot, ".exe") || !stricmp(dot, ".com") || !stricmp(dot, ".bat"))
+            buf->wrapped_st_mode |= 0111;
+    }
+    buf->wrapped_st_dev = buf->wrapped_st_rdev =
+        (path[0] && path[1] == ':') ? (path[0] | 0x20) - 'a' : _getdrive() - 1;
+    buf->wrapped_st_nlink = 1;
+    buf->wrapped_st_size = found.size;
+    buf->wrapped_st_blksize = 4096;
+    buf->wrapped_st_blocks = (found.size + 511) / 512;
+    memset(&when, 0, sizeof when);
+    when.tm_year = (found.wr_date >> 9) + 80;
+    when.tm_mon = ((found.wr_date >> 5) & 15) - 1;
+    when.tm_mday = found.wr_date & 31;
+    when.tm_hour = found.wr_time >> 11;
+    when.tm_min = (found.wr_time >> 5) & 63;
+    when.tm_sec = (found.wr_time & 31) * 2;
+    when.tm_isdst = -1;
+    buf->wrapped_st_atime = buf->wrapped_st_mtime = buf->wrapped_st_ctime = mktime(&when);
+    *ret = 0;
+    return 1;
+}
+
 int stat_wrapper(const char *file_name, struct stat_wrapper *buf)
 {
     struct stat real_buf;
@@ -280,7 +392,9 @@ int stat_wrapper(const char *file_name, struct stat_wrapper *buf)
         copy[len - 1] = 0;
         file_name = copy;
     }
-    if ((ret = stat(file_name, &real_buf)) >= 0)
+    if (short_stat(file_name, buf, &ret)) return ret;
+    LOOKING_UP(file_name, ret = stat(file_name, &real_buf));
+    if (ret >= 0)
         copy_to_stat_wrapper(buf, &real_buf);
     return ret;
 }

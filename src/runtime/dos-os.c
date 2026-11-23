@@ -760,11 +760,18 @@ void allocator_record_backtrace(void *fp, struct thread *th)
     (void)fp; (void)th;
 }
 
-int gettimeofday(struct timeval *tv, void *tz)
+/* Asking DOS for the time takes about ten calls into real mode (1.25 ms
+ * under QEMU), and Lisp asks often.  The BIOS counts timer ticks at
+ * 0040:006Ch -- 1,193,182/65,536 a second, which is all the resolution
+ * DOS's own clock has -- so DOS is asked once a minute, and whenever the
+ * count has gone backwards (midnight), and the ticks give the time in
+ * between. */
+#define BIOS_TICKS (*(volatile unsigned long *)0x46C)
+#define TICKS_PER_RESYNC (18UL * 60)
+
+static void dos_clock(struct timeval *tv)
 {
     struct dostime_t t;
-    (void)tz;
-    dos_init_timezone();
     /* time() has one-second resolution; take the fraction from the DOS clock */
     /* (again if the second changed between the two readings) */
     do {
@@ -772,5 +779,32 @@ int gettimeofday(struct timeval *tv, void *tz)
         _dos_gettime(&t);
     } while (time(0) != tv->tv_sec);
     tv->tv_usec = t.hsecond * 10000L;
+}
+
+int gettimeofday(struct timeval *tv, void *tz)
+{
+    static struct timeval base, last;
+    static unsigned long base_ticks;
+    static int have_base;
+    unsigned long ticks = BIOS_TICKS;
+    (void)tz;
+    dos_init_timezone();
+    if (!have_base || ticks < base_ticks || ticks - base_ticks > TICKS_PER_RESYNC) {
+        dos_clock(&base);
+        base_ticks = BIOS_TICKS;
+        have_base = 1;
+        *tv = base;
+    } else {
+        unsigned long passed = ticks - base_ticks;      /* 54,925.4 us a tick */
+        unsigned long us = passed * 54925UL + passed * 4 / 10 + base.tv_usec;
+        tv->tv_sec = base.tv_sec + us / 1000000UL;
+        tv->tv_usec = us % 1000000UL;
+    }
+    /* asking DOS again can give a time a fraction of a tick earlier: do
+     * not let the clock step back for that (a clock set back by hand is
+     * another matter, and is believed) */
+    if (tv->tv_sec == last.tv_sec && tv->tv_usec < last.tv_usec) *tv = last;
+    else if (tv->tv_sec + 1 == last.tv_sec && last.tv_usec < 100000) *tv = last;
+    last = *tv;
     return 0;
 }
