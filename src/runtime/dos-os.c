@@ -434,7 +434,13 @@ void dos_exception_dispatch(os_context_t *slot)
         info.si_code = (context.err & 1) ? SEGV_ACCERR : SEGV_MAPERR;
         info.si_addr = (void *)context.cr2;
         break;
-    default: sig = SIGSEGV; break;
+    default:
+        /* a general protection fault, say: there is no address to give, and
+         * zero would be read as "the undefined alien address" */
+        sig = SIGSEGV;
+        info.si_code = SEGV_ACCERR;
+        info.si_addr = (void *)context.eip;
+        break;
     }
     info.si_signo = sig;
     deliver_signal(sig, &info, &context);
@@ -462,7 +468,12 @@ static void set_exception_handler(int n, void (*handler)(void))
     if (r.x.cflag) lose("cannot install DPMI exception handler %d", n);
 }
 
-#if INSTALL_SIG_MEMORY_FAULT_HANDLER
+/* A memory fault that is not the collector's doing (its write barrier,
+ * when page protection is in use, and its guard pages) is the program's:
+ * a pointer that points nowhere, in Lisp or in machine code called from
+ * it.  That is Lisp's MEMORY-FAULT-ERROR, which can be handled, and not
+ * the end of the program -- so the handler is installed whether or not
+ * the collector uses page protection. */
 static void
 sigsegv_handler(int signal, siginfo_t *info, os_context_t *context)
 {
@@ -472,14 +483,11 @@ sigsegv_handler(int signal, siginfo_t *info, os_context_t *context)
     if (!handle_guard_page_triggered(context, fault_addr))
         lisp_memory_fault_error(context, fault_addr);
 }
-#endif
 
 void
 os_install_interrupt_handlers(void)
 {
-#if INSTALL_SIG_MEMORY_FAULT_HANDLER
     ll_install_handler(SIG_MEMORY_FAULT, sigsegv_handler);
-#endif
 }
 
 /* ------------------------------------------------------------ Ctrl-Break */
