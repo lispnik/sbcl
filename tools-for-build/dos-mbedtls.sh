@@ -16,7 +16,7 @@
 set -e
 here=`cd "\`dirname "$0"\`" && pwd`
 : ${SBCL_DOS_TOOLS:=`cd "$here/../.." && pwd`/sbcl-dos-tools}
-src=${1:-`ls -d $SBCL_DOS_TOOLS/dl-mbedtls/mbedtls-3.6.* | tail -1`}
+src=${1:-`ls -d $SBCL_DOS_TOOLS/dl-mbedtls/mbedtls-3.6.*/ | tail -1 | sed "s,/$,,"`}
 [ -f "$src/include/mbedtls/mbedtls_config.h" ] || { echo "no Mbed TLS source in $src"; exit 1; }
 B=$SBCL_DOS_TOOLS/mbedtls-build
 export WATCOM=$SBCL_DOS_TOOLS/ow
