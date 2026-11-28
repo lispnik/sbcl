@@ -41,6 +41,9 @@ O = dos-obj
 WATT32_SRC ?= $(SBCL_DOS_TOOLS)/dl-watt32/src
 WATT32_BUILD ?= $(SBCL_DOS_TOOLS)/watt32-build
 WATT32_LIB := $(wildcard $(WATT32_BUILD)/wattcpsf.lib)
+# TLS, for sockets: Mbed TLS, if it has been built (tools-for-build/dos-mbedtls.sh)
+MBEDTLS_BUILD ?= $(SBCL_DOS_TOOLS)/mbedtls-build
+MBEDTLS_LIB := $(wildcard $(MBEDTLS_BUILD)/mbedtls.lib)
 
 # -6s -ecc  stack-based cdecl calling convention, as Lisp and x86-assem.S expect
 # -s        no stack overflow checks: Lisp code runs on a stack of its own
@@ -70,11 +73,21 @@ WRAP_SRC += dos-sock.c
 SOCK_CFLAGS = -zq -bt=dos -mf -6s -fpi87 -fp6 -s -ox -of+ -wcd=102 -wcd=111 \
 	-DWATT32_STATIC -i=$(WATT32_BUILD)/gen -i=$(WATT32_SRC)/inc -i=.
 endif
+ifneq ($(WATT32_LIB),)
+ifneq ($(MBEDTLS_LIB),)
+# dostls.c is the face of Mbed TLS for Lisp, compiled as that library and
+# Watt-32 are (no -ecc); what Lisp calls in it is marked __cdecl.
+TLS_OBJ = $(O)/dostls.obj
+TLS_CFLAGS = -zq -bt=dos -mf -6s -fpi87 -fp6 -s -ox -of+ -za99 -wcd=102 -wcd=111 \
+	-i=$(MBEDTLS_BUILD)/src/include -i=.
+endif
+endif
 GC_SRC = fullcgc.c gencgc.c traceroot.c
 C_SRC = $(COMMON_SRC) $(ARCH_SRC) $(OS_SRC) $(GC_SRC)
 
 OBJS = $(C_SRC:%.c=$(O)/%.obj) $(O)/tlsf.obj $(O)/x86-assem.obj \
-	$(O)/x86-dos-exc.obj $(SOCK_OBJ)
+	$(O)/x86-dos-exc.obj $(SOCK_OBJ) $(TLS_OBJ)
+EXTRA_LIBS = $(WATT32_LIB) $(if $(TLS_OBJ),$(MBEDTLS_LIB))
 
 HEADERS = $(wildcard *.h *.inc genesis/*.h genesis/*.inc dos-include/*.h dos-include/sys/*.h)
 
@@ -88,6 +101,9 @@ $(O)/%.obj: %.c $(HEADERS) | $(O)
 
 $(O)/dos-sock.obj: dos-sock.c dos-sock.h $(WATT32_LIB) | $(O)
 	$(WCC) $(SOCK_CFLAGS) -fo=$@ $<
+
+$(O)/dostls.obj: dostls.c dostls.h $(MBEDTLS_LIB) | $(O)
+	$(WCC) $(TLS_CFLAGS) -fo=$@ $<
 
 $(O)/tlsf.obj: ../../tlsf-bsd/tlsf/tlsf.c $(HEADERS) | $(O)
 	$(WCC) $(CFLAGS) -i=../../tlsf-bsd/tlsf -fo=$@ $<
@@ -125,7 +141,7 @@ $(O)/dos-symtab0.c: | $(O)
 	echo 'const struct dos_symbol dos_symtab[1]; const int dos_symtab_size = 0;' >> $@
 
 $(O)/sbcl0.exe: $(OBJS) $(O)/dos-symtab0.obj
-	$(call link,$@,$(OBJS) $(O)/dos-symtab0.obj,$(WATT32_LIB))
+	$(call link,$@,$(OBJS) $(O)/dos-symtab0.obj,$(EXTRA_LIBS))
 
 $(O)/dos-symtab.c: $(O)/sbcl0.exe ../../output/cold-sbcl.map dos-extra-syms.txt $(WRAP_SRC) \
 		../../tools-for-build/dos-symtab.sh
@@ -138,7 +154,7 @@ $(O)/dos-symtab.obj: $(O)/dos-symtab.c
 	$(WCC) -zq -bt=dos -mf -6s -ecc -fo=$@ $<
 
 sbcl.exe: $(OBJS) $(O)/dos-symtab.obj
-	$(call link,$@,$(OBJS) $(O)/dos-symtab.obj,$(WATT32_LIB))
+	$(call link,$@,$(OBJS) $(O)/dos-symtab.obj,$(EXTRA_LIBS))
 	cp -f $(HXRT)/BIN/HDPMI32.EXE hdpmi32.exe
 
 # The program that extracts constants and type sizes from the C headers
